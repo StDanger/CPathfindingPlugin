@@ -15,13 +15,26 @@ ACPathVolume::ACPathVolume()
 	RootComponent = VolumeBox;
 }
 
+FCPathNode& ACPathVolume::GetNodeFromPosition(FVector WorldLocation, bool& IsValid)
+{
+	FVector XYZ = GetXYZFromPosition(WorldLocation);
+	IsValid = IsInBounds(XYZ);
+	
+	if(IsValid)
+	{
+		return Nodes[GetIndexFromXYZ(XYZ)];	
+	}
+
+	return Nodes[0];
+
+}
+
 // Called when the game starts or when spawned
 void ACPathVolume::BeginPlay()
 {
 	Super::BeginPlay();
 	UBoxComponent* tempBox = Cast<UBoxComponent>(GetRootComponent());
-	DrawDebugBox(GetWorld(), GetActorLocation(), tempBox->GetScaledBoxExtent(),
-		FColor::Magenta, true, 10);
+
 
 	NodeCount[0] = VolumeBox->GetScaledBoxExtent().X*2 / VoxelSize + 1;
 	NodeCount[1] = VolumeBox->GetScaledBoxExtent().Y*2 / VoxelSize + 1;
@@ -33,7 +46,7 @@ void ACPathVolume::BeginPlay()
 
 void ACPathVolume::GenerateGraph()
 {
-	FVector Start = GetActorLocation() - VolumeBox->GetScaledBoxExtent();
+	StartPosition = GetActorLocation() - VolumeBox->GetScaledBoxExtent();
 	int Index = 0;
 
 	//Reserving memory in array before adding elements
@@ -48,7 +61,7 @@ void ACPathVolume::GenerateGraph()
 		{
 			for (int z = 0; z < NodeCount[2]; z++)
 			{
-				FVector Location = FVector(Start + FVector(x, y, z)*VoxelSize);
+				FVector Location = FVector(StartPosition + FVector(x, y, z)*VoxelSize);
 				Nodes.Add(FCPathNode(Index, Location));
 				
 
@@ -84,6 +97,8 @@ void ACPathVolume::Tick(float DeltaTime)
 			if(GetWorld()->QueryOverlapData(TraceHandles[i], OverlapDatum))
 			{
 				TraceHandles.RemoveAtSwap(i);
+
+				Nodes[OverlapDatum.UserData].WorldLocation = OverlapDatum.Pos;
 				
 				if(OverlapDatum.OutOverlaps.Num() > 0)
 				{
@@ -94,6 +109,11 @@ void ACPathVolume::Tick(float DeltaTime)
 				{
 					if(DrawVoxels)
 						DrawDebugBox(GetWorld(), OverlapDatum.Pos, FVector(VoxelSize/2), FColor::Green, true, 10);
+					
+					Nodes[OverlapDatum.UserData].IsFree = true;
+					UpdateNeighbours(Nodes[OverlapDatum.UserData]);
+					
+					
 				}
 				
 				i--;
@@ -102,5 +122,81 @@ void ACPathVolume::Tick(float DeltaTime)
 	}
 
 
+}
+
+void ACPathVolume::UpdateNeighbours(FCPathNode& Node)
+{
+	TArray<int> Indexes = GetAdjacentIndexes(Node.Index);
+	for (int Index : Indexes)
+	{
+		if(Nodes[Index].IsFree)
+		{
+			Nodes[Index].FreeNeighbors.Add(&Nodes[Node.Index]);
+			Node.FreeNeighbors.Add(&Nodes[Index]);
+			if(DrawConnections)
+				DrawDebugLine(GetWorld(), Node.WorldLocation, Nodes[Index].WorldLocation, FColor::Orange, true, 10);
+		}
+	}
+	
+}
+
+
+TArray<int> ACPathVolume::GetAdjacentIndexes(int Index) const
+{
+	FVector XYZ = GetXYZFromPosition(Nodes[Index].WorldLocation);
+
+	TArray<int> Indexes;
+	Indexes.Reserve(6);
+	
+	for(int Comp = 0; Comp < 3; Comp++)
+	{
+		for(int Sign = -1; Sign < 2; Sign += 2)
+		{
+			FVector NewXYZ = XYZ;
+			NewXYZ[Comp] += Sign;
+			if(IsInBounds(NewXYZ))
+			{
+				Indexes.Add(GetIndexFromXYZ(NewXYZ));
+			}
+
+		}
+	}
+	
+	return Indexes;
+}
+
+FVector ACPathVolume::GetXYZFromPosition(FVector WorldLocation) const
+{
+	FVector RelativePos = WorldLocation - StartPosition;
+	RelativePos = RelativePos / VoxelSize;
+	return FVector(FMath::RoundToFloat(RelativePos.X),
+		FMath::RoundToFloat(RelativePos.Y),
+		FMath::RoundToFloat(RelativePos.Z));
+	
+}
+
+int ACPathVolume::GetIndexFromPosition(FVector WorldLocation) const
+{
+	FVector XYZ = GetXYZFromPosition(WorldLocation);
+	return GetIndexFromXYZ(XYZ);
+}
+
+bool ACPathVolume::IsInBounds(FVector XYZ) const
+{
+	if(XYZ.X < 0 || XYZ.X >= NodeCount[0])
+		return false;
+
+	if(XYZ.Y < 0 || XYZ.Y >= NodeCount[1])
+		return false;
+
+	if(XYZ.Z < 0 || XYZ.Z >= NodeCount[2])
+		return false;
+
+	return true;
+}
+
+float ACPathVolume::GetIndexFromXYZ(FVector V) const
+{
+	return (V.X * (NodeCount[1] * NodeCount[2])) + (V.Y * NodeCount[2]) + V.Z;
 }
 

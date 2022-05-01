@@ -33,15 +33,15 @@ public:
 	
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-	bool IsFree = true;
+	bool IsFree = false;
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	bool IsGround = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-	FVector WorldLocation;
+	FVector WorldLocation = {0, 0, 0};
 	
-	int Index;
+	int Index = -1;
 	
 	TArray<FCPathNode*> FreeNeighbors;
 	
@@ -60,30 +60,39 @@ public:
 	ACPathVolume();
 
 	//Box to mark the area to generate graph in. It should not be rotated, the rotation will be ignored.
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = GenerationSettings)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
 	class UBoxComponent* VolumeBox;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = GenerationSettings)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
 	TEnumAsByte<ECollisionChannel>  TraceChannel;
 	
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = GenerationSettings)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
 	float AgentRadius = 20;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = GenerationSettings)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
 	float AgentHeight = 150;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = GenerationSettings)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
 	bool DrawVoxels = true;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
+	bool DrawConnections = true;
+
 	//Size of the smallest voxel size, default: AgentRadius*2
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = GenerationSettings)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
 	float VoxelSize = AgentRadius*2;
+
+	//Returns node at given world location, valid is set to false if the node is out of bounds
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = CPathUtility)
+	FCPathNode& GetNodeFromPosition(FVector WorldLocation, bool& IsValid);
 	
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
 	void GenerateGraph();
+
+	//TArray<FCPathNode*> GetAllNeighbours; 
 
 public:	
 	// Called every frame
@@ -94,7 +103,9 @@ public:
 	TArray<FCPathNode> Nodes;
 
 private:
-	
+
+	//position of the first voxel
+	FVector StartPosition;
 	
 	//Trace handles still waiting for execution
 	TArray<FTraceHandle> TraceHandles;
@@ -102,4 +113,18 @@ private:
 	//Dimension sizes of the Nodes array, XYZ 
 	int NodeCount[3];
 
+	void UpdateNeighbours(FCPathNode& Node);
+	
+	TArray<int> GetAdjacentIndexes(int Index) const;
+
+	// Returns the X Y and Z relative to StartPosition and divided by VoxelSize. Multiply them to get the index. NO BOUNDS CHECK
+	FVector GetXYZFromPosition(FVector WorldLocation) const;
+
+	// Returns an index in the Node array from world position. NO BOUNDS CHECK
+	int GetIndexFromPosition(FVector WorldLocation) const;
+
+	// takes in what `GetXYZFromPosition` returns and performs a bounds check
+	bool IsInBounds(FVector XYZ) const;
+
+	inline float GetIndexFromXYZ(FVector V) const;
 };
