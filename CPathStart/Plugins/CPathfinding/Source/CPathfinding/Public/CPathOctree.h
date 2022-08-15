@@ -20,11 +20,11 @@ public:
 
 	bool IsFree = false;
 
-	bool IsGround = false;
+	uint32 Data = 0;
 
-	char FreeNeighbours = 0;
+	//char FreeNeighbours = 0;
 
-	char Depth = 0;
+	//char Depth = 0;
 
 
 	

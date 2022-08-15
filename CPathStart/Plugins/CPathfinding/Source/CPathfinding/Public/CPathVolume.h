@@ -6,13 +6,17 @@
 #include "GameFramework/Actor.h"
 #include "WorldCollision.h"
 #include <memory>
+#include <chrono>
+#include <vector>
 #include "CPathOctree.h"
 #include "CPathVolume.generated.h"
 
 
 // This limit can be up to 2^16, but 2^15 should be MORE than enough
-#define DEPTH_0_LIMIT 1<<15 
+#define DEPTH_0_LIMIT (uint32)1<<16 
 
+#define TIMENOW std::chrono::steady_clock::now()
+#define TIMEDIFF(BEGIN, END) ((double)std::chrono::duration_cast<std::chrono::nanoseconds>(END - BEGIN).count())/1000000.0
 
 
 USTRUCT(BlueprintType)
@@ -136,10 +140,15 @@ private:
 	static const FVector ChildPositionOffsetMaskByIndex[8];
 	
 	//Trace handles still waiting for execution
+
 	TArray<FTraceHandle> TraceHandles;
+	std::vector<FTraceHandle>* TraceHandlesCurr;
+	std::vector<FTraceHandle>* TraceHandlesNext;
 	
 	//Dimension sizes of the Nodes array, XYZ 
 	int NodeCount[3];
+
+	void ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentUserData, FVector TreeLocation);
 
 	void UpdateNeighbours(FCPathNode& Node);
 	
@@ -159,13 +168,20 @@ private:
 	inline float GetVoxelSizeByDepth(int Depth) const;
 
 	// Creates UserParams for AsyncOverlapByChannel
-	inline uint32 PackUserParams(uint32 Index, uint32 Depth) const;
+	inline uint32 CreateUserParams(uint32 Index, uint32 Depth) const;
 
-	inline void UnpackUserParams(uint32 UserParams, uint32& Index, uint32& Depth);
+	inline uint32 GetOuterIndex(uint32 UserParams) const;
+
+	inline void SetDepth(uint32& UserParams, uint32 NewDepth);
+
+	inline uint32 GetDepth(uint32 UserParams) const;
 
 	// Returns a number from  0 to 7 - a child index at required depth from the params
 	inline uint32 GetChildIndex(uint32 UserParams, uint32 Depth) const;
 
 	// This assumes that child index at Depth is 000
 	inline void SetChildIndex(uint32& UserParams, uint32 Depth, uint32 ChildIndex);
+
+	std::chrono::steady_clock::time_point GenerationStart;
+	bool PrintGenerationTime = false;
 };
