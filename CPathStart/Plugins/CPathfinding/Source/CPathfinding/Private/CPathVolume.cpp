@@ -20,12 +20,13 @@ ACPathVolume::ACPathVolume()
 
 const FVector ACPathVolume::ChildPositionOffsetMaskByIndex[8] =
 {	{-1, -1, -1},
-	{-1, -1, 1},
 	{-1, 1, -1},
+	{-1, -1, 1},
 	{-1, 1, 1},
+
 	{1, -1, -1},
-	{1, -1, 1},
 	{1, 1, -1},
+	{1, -1, 1},
 	{1, 1, 1} };
 
 FCPathNode& ACPathVolume::GetNodeFromPosition(FVector WorldLocation, bool& IsValid)
@@ -106,11 +107,11 @@ void ACPathVolume::GenerateGraph()
 	TraceHandlesNext = new std::vector<FTraceHandle>;
 	
 
-	for (int x = 0; x < NodeCount[0]; x++)
+	for (uint32 x = 0; x < NodeCount[0]; x++)
 	{
-		for (int y = 0; y < NodeCount[1]; y++)
+		for (uint32 y = 0; y < NodeCount[1]; y++)
 		{
-			for (int z = 0; z < NodeCount[2]; z++)
+			for (uint32 z = 0; z < NodeCount[2]; z++)
 			{
 				FVector Location = FVector(StartPosition + FVector(x, y, z) * CurrVoxelSize);
 				//Nodes.Add(FCPathNode(Index, Location));
@@ -122,7 +123,7 @@ void ACPathVolume::GenerateGraph()
 					TraceBox,
 					FCollisionQueryParams::DefaultQueryParam,
 					FCollisionResponseParams::DefaultResponseParam,
-					nullptr, CreateUserParams(Index, 0)));
+					nullptr, CreateTreeID(Index, 0)));
 				
 				Index++;
 			}
@@ -163,13 +164,18 @@ void ACPathVolume::Tick(float DeltaTime)
 				Depth = GetDepth(OverlapDatum.UserData);
 				VoxelCountAtDepth[Depth]++;
 				
-				Octrees[Index].IsFree = OverlapDatum.OutOverlaps.Num() == 0;
+				uint32 DepthReached;
+				CPathOctree* TracedTree =  GetOctreeFromID(OverlapDatum.UserData, DepthReached);
+
+				checkf(DepthReached == Depth, TEXT("CPATH - Graph Generation:::Tracing - DepthReached not equal Depth passed in UserData"));
+
+				TracedTree->IsFree = OverlapDatum.OutOverlaps.Num() == 0;
 
 				if (Depth < (uint32)OctreeDepth)
 				{
-					if (!Octrees[Index].IsFree)
+					if (!TracedTree->IsFree)
 					{
-						ExpandOctree(&Octrees[Index], OverlapDatum.UserData, OverlapDatum.Pos);
+						ExpandOctree(TracedTree, OverlapDatum.UserData, OverlapDatum.Pos);
 						TracesAdded += 8;
 					}
 				}
@@ -178,12 +184,12 @@ void ACPathVolume::Tick(float DeltaTime)
 				if(OverlapDatum.OutOverlaps.Num() > 0)
 				{
 					if(DepthsToDraw[Depth])
-						DrawDebugBox(GetWorld(), OverlapDatum.Pos, FVector(GetVoxelSizeByDepth(Depth) /2), FColor::Red, true, 10);
+						DrawDebugBox(GetWorld(), GetWorldPositionFromTreeID(OverlapDatum.UserData), FVector(GetVoxelSizeByDepth(Depth) /2), FColor::Red, true, 10);
 				}
 				else
 				{
 					if (DepthsToDraw[Depth])
-						DrawDebugBox(GetWorld(), OverlapDatum.Pos, FVector(GetVoxelSizeByDepth(Depth) / 2), FColor::Green, true, 10);
+						DrawDebugBox(GetWorld(), GetWorldPositionFromTreeID(OverlapDatum.UserData), FVector(GetVoxelSizeByDepth(Depth) / 2), FColor::Green, true, 10);
 					//UpdateNeighbours(Nodes[OverlapDatum.UserData]);
 				}
 				
@@ -229,16 +235,17 @@ void ACPathVolume::BeginDestroy()
 	delete(Octrees);
 }
 
-void ACPathVolume::ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentUserData, FVector TreeLocation)
+void ACPathVolume::ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentTreeID, FVector TreeLocation)
 {
 
-	uint32 NewDepth = GetDepth(CurrentUserData) + 1;
+	uint32 NewDepth = GetDepth(CurrentTreeID) + 1;
 
 	TreeToExpand->Children = new CPathOctree[8];
 
 	float CurrHalfSize = GetVoxelSizeByDepth(NewDepth) / 2.f;
 
 	FCollisionShape TraceBox = FCollisionShape::MakeBox(FVector(CurrHalfSize));
+	FCollisionShape TraceCapsule = FCollisionShape::MakeCapsule(FVector(CurrHalfSize) * 4);
 
 	// Generating children
 	for (uint32 ChildIndex = 0; ChildIndex < 8; ChildIndex++)
@@ -247,10 +254,13 @@ void ACPathVolume::ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentUserDat
 		FVector Location = TreeLocation + ChildPositionOffsetMaskByIndex[ChildIndex] * CurrHalfSize;
 
 		//TreeToExpand->Children[ChildIndex].Depth = NewDepth;
-		uint32 UserData = CurrentUserData;
+		uint32 TreeID = CurrentTreeID;
 
-		SetDepth(UserData, NewDepth);
-		SetChildIndex(UserData, NewDepth, ChildIndex);
+		SetDepth(TreeID, NewDepth);
+		SetChildIndex(TreeID, NewDepth, ChildIndex);
+
+		
+		
 
 		TraceHandlesNext->push_back(GetWorld()->AsyncOverlapByChannel(
 			Location,
@@ -259,7 +269,17 @@ void ACPathVolume::ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentUserDat
 			TraceBox,
 			FCollisionQueryParams::DefaultQueryParam,
 			FCollisionResponseParams::DefaultResponseParam,
-			nullptr, UserData));
+			nullptr, TreeID));
+
+		/*for (int i = 0; i < AdditionalTraces; i++)
+		{
+			GetWorld()->OverlapAnyTestByChannel(Location,
+				FQuat(FRotator::ZeroRotator),
+				TraceChannel,
+				TraceCapsule,
+				FCollisionQueryParams::DefaultQueryParam,
+				FCollisionResponseParams::DefaultResponseParam);
+		}*/
 	}
 }
 
@@ -346,7 +366,7 @@ inline float ACPathVolume::GetVoxelSizeByDepth(int Depth) const
 
 
 
-inline uint32 ACPathVolume::CreateUserParams(uint32 Index, uint32 Depth) const
+inline uint32 ACPathVolume::CreateTreeID(uint32 Index, uint32 Depth) const
 {
 #if WITH_EDITOR
 	checkf(Depth < 5, TEXT("CPATH - Graph Generation:::DEPTH can be up to 4"));
@@ -358,28 +378,28 @@ inline uint32 ACPathVolume::CreateUserParams(uint32 Index, uint32 Depth) const
 	return Index;
 }
 
-inline uint32 ACPathVolume::GetOuterIndex(uint32 UserParams) const
+inline uint32 ACPathVolume::GetOuterIndex(uint32 TreeID) const
 {
-	return UserParams & 0x0000FFFF;
+	return TreeID & 0x0000FFFF;
 }
 
-inline void ACPathVolume::SetDepth(uint32& UserParams, uint32 NewDepth)
+inline void ACPathVolume::SetDepth(uint32& TreeID, uint32 NewDepth)
 {
 #if WITH_EDITOR
 	checkf(NewDepth < 5, TEXT("CPATH - Graph Generation:::DEPTH can be up to 4"));
 #endif
 
-	UserParams &= 0xFFF8FFFF;
-	UserParams |= NewDepth << 16;
+	TreeID &= 0xFFF8FFFF;
+	TreeID |= NewDepth << 16;
 }
 
 
-inline uint32 ACPathVolume::GetDepth(uint32 UserParams) const
+inline uint32 ACPathVolume::GetDepth(uint32 TreeID) const
 {
-	return (UserParams & 0x00070000) >> 16;
+	return (TreeID & 0x00070000) >> 16;
 }
 
-inline uint32 ACPathVolume::GetChildIndex(uint32 UserParams, uint32 Depth) const
+inline uint32 ACPathVolume::GetChildIndex(uint32 TreeID, uint32 Depth) const
 {
 #if WITH_EDITOR
 	checkf(Depth < 5 && Depth > 0, TEXT("CPATH - Graph Generation:::DEPTH can be up to 4"));
@@ -387,10 +407,10 @@ inline uint32 ACPathVolume::GetChildIndex(uint32 UserParams, uint32 Depth) const
 	uint32 DepthOffset = Depth * 3 + 19;
 	uint32 Mask = 0x00000007 << DepthOffset;
 
-	return (UserParams & Mask) >> DepthOffset;
+	return (TreeID & Mask) >> DepthOffset;
 }
 
-inline void ACPathVolume::SetChildIndex(uint32& UserParams, uint32 Depth, uint32 ChildIndex)
+inline void ACPathVolume::SetChildIndex(uint32& TreeID, uint32 Depth, uint32 ChildIndex)
 {
 #if WITH_EDITOR
 	checkf(Depth < 5 && Depth > 0, TEXT("CPATH - Graph Generation:::DEPTH can be up to 4"));
@@ -399,6 +419,63 @@ inline void ACPathVolume::SetChildIndex(uint32& UserParams, uint32 Depth, uint32
 	
 	ChildIndex <<= Depth * 3 + 19;
 
-	UserParams |= ChildIndex;
+	TreeID |= ChildIndex;
+}
+
+FVector ACPathVolume::GetWorldPositionFromTreeID(uint32 TreeID) const
+{
+	uint32 OuterIndex = GetOuterIndex(TreeID);
+	uint32 Depth = GetDepth(TreeID);
+
+	uint32 X = OuterIndex / (NodeCount[1] * NodeCount[2]);
+	OuterIndex -= X * NodeCount[1] * NodeCount[2];
+	uint32 Y = OuterIndex / NodeCount[2];
+	uint32 Z = OuterIndex % NodeCount[2];
+
+	FVector CurrPosition = StartPosition + GetVoxelSizeByDepth(0) * FVector(X, Y, Z);
+
+
+	for (uint32 CurrDepth = 1; CurrDepth <= Depth; CurrDepth++)
+	{
+		CurrPosition += GetVoxelSizeByDepth(CurrDepth) * 0.5f * ChildPositionOffsetMaskByIndex[GetChildIndex(TreeID, CurrDepth)];
+	}
+
+	return CurrPosition;
+}
+
+inline void ACPathVolume::ReplaceChildIndex(uint32& TreeID, uint32 Depth, uint32 ChildIndex)
+{
+#if WITH_EDITOR
+	checkf(Depth < 5 && Depth > 0, TEXT("CPATH - Graph Generation:::DEPTH can be up to 4"));
+	checkf(ChildIndex < 8, TEXT("CPATH - Graph Generation:::Child Index can be up to 7"));
+#endif
+
+	uint32 DepthOffset = Depth * 3 + 19;
+
+	// Clearing previous child index
+	TreeID &= ~(0x00000007 << DepthOffset);
+
+	ChildIndex <<= DepthOffset;
+	TreeID |= ChildIndex;
+}
+
+CPathOctree* ACPathVolume::GetOctreeFromID(uint32 TreeID, uint32& DepthReached)
+{
+	uint32 Depth = GetDepth(TreeID);
+	CPathOctree* CurrTree = &Octrees[GetOuterIndex(TreeID)];
+	DepthReached = 0;
+
+	for (uint32 CurrDepth = 1; CurrDepth <= Depth; CurrDepth++)
+	{
+		// Child not found, returning the deepest found parent
+		if (!CurrTree->Children)
+		{
+			break;
+		}
+
+		CurrTree = &CurrTree->Children[GetChildIndex(TreeID, CurrDepth)];
+		DepthReached = CurrDepth;
+	}
+	return CurrTree;
 }
 

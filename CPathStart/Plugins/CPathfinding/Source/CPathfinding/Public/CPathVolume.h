@@ -80,6 +80,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
 		float AgentRadius = 20;
 
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
+		float AdditionalTraces = 0;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
 		float AgentHeight = 150;
 	
@@ -146,19 +150,19 @@ private:
 	std::vector<FTraceHandle>* TraceHandlesNext;
 	
 	//Dimension sizes of the Nodes array, XYZ 
-	int NodeCount[3];
+	uint32 NodeCount[3];
 
-	void ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentUserData, FVector TreeLocation);
+	void ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentTreeID, FVector TreeLocation);
 
 	void UpdateNeighbours(FCPathNode& Node);
 	
 	TArray<int> GetAdjacentIndexes(int Index) const;
 
 	// Returns the X Y and Z relative to StartPosition and divided by VoxelSize. Multiply them to get the index. NO BOUNDS CHECK
-	FVector GetXYZFromPosition(FVector WorldLocation) const;
+	inline FVector GetXYZFromPosition(FVector WorldLocation) const;
 
-	// Returns an index in the Node array from world position. NO BOUNDS CHECK
-	int GetIndexFromPosition(FVector WorldLocation) const;
+	// Returns an index in the Octree array from world position. NO BOUNDS CHECK
+	inline int GetIndexFromPosition(FVector WorldLocation) const;
 
 	// takes in what `GetXYZFromPosition` returns and performs a bounds check
 	bool IsInBounds(FVector XYZ) const;
@@ -167,20 +171,29 @@ private:
 
 	inline float GetVoxelSizeByDepth(int Depth) const;
 
-	// Creates UserParams for AsyncOverlapByChannel
-	inline uint32 CreateUserParams(uint32 Index, uint32 Depth) const;
+	// Creates TreeID for AsyncOverlapByChannel
+	inline uint32 CreateTreeID(uint32 Index, uint32 Depth) const;
 
-	inline uint32 GetOuterIndex(uint32 UserParams) const;
+	inline uint32 GetOuterIndex(uint32 TreeID) const;
 
-	inline void SetDepth(uint32& UserParams, uint32 NewDepth);
+	inline void SetDepth(uint32& TreeID, uint32 NewDepth);
 
-	inline uint32 GetDepth(uint32 UserParams) const;
+	inline uint32 GetDepth(uint32 TreeID) const;
 
 	// Returns a number from  0 to 7 - a child index at required depth from the params
-	inline uint32 GetChildIndex(uint32 UserParams, uint32 Depth) const;
+	inline uint32 GetChildIndex(uint32 TreeID, uint32 Depth) const;
 
-	// This assumes that child index at Depth is 000
-	inline void SetChildIndex(uint32& UserParams, uint32 Depth, uint32 ChildIndex);
+	// This assumes that child index at Depth is 000, if its not use ReplaceChildIndex
+	inline void SetChildIndex(uint32& TreeID, uint32 Depth, uint32 ChildIndex);
+
+	// Replaces child index at given depth
+	inline void ReplaceChildIndex(uint32& TreeID, uint32 Depth, uint32 ChildIndex);
+
+	// Returns the child with this tree id, or his parent at DepthReached in case the child doesnt exist
+	CPathOctree* GetOctreeFromID(uint32 TreeID, uint32& DepthReached);
+
+	inline FVector GetWorldPositionFromTreeID(uint32 TreeID) const;
+
 
 	std::chrono::steady_clock::time_point GenerationStart;
 	bool PrintGenerationTime = false;

@@ -8,7 +8,15 @@
  * 
  */
 
-
+enum NeighbourDirection
+{
+	Left,
+	Front,
+	Right,
+	Behind,
+	Below,
+	Above
+};
 
 
 class CPATHFINDING_API CPathOctree
@@ -36,6 +44,7 @@ public:
 
 	~CPathOctree()
 	{
-		delete(Children);
+		if(this && Children)
+			delete(Children);
 	};
 };
