@@ -19,48 +19,6 @@
 #define TIMEDIFF(BEGIN, END) ((double)std::chrono::duration_cast<std::chrono::nanoseconds>(END - BEGIN).count())/1000000.0
 
 
-USTRUCT(BlueprintType)
-struct FCPathGroundData
-{
-	GENERATED_BODY()
-	FVector GroundSlope = FVector::ZeroVector;
-	FVector GroundAxis = FVector::ZeroVector;
-};
-
-USTRUCT(BlueprintType)
-struct FCPathNode
-{
-	GENERATED_BODY()
-public:
-
-	FCPathNode(){};
-	
-	FCPathNode(int Index, FVector Location)
-		:
-	WorldLocation(Location),
-	Index(Index)
-	{};
-	
-	
-	
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-	bool IsFree = false;
-	
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-	bool IsGround = false;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-	FVector WorldLocation = {0, 0, 0};
-	
-	int Index = -1;
-	
-	TArray<FCPathNode*> FreeNeighbors;
-	
-	
-	
-};
-
-
 UCLASS()
 class ACPathVolume : public AActor
 {
@@ -107,11 +65,11 @@ public:
 	// This is a read only info about generated graph
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = CPathGeneratedInfo)
 		TArray<int> VoxelCountAtDepth;
-	
 
-	//Returns node at given world location, valid is set to false if the node is out of bounds
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category = CPathUtility)
-	FCPathNode& GetNodeFromPosition(FVector WorldLocation, bool& IsValid);
+	// Finds and draws a path from first call to 2nd call. Calls outside of volume dont count.
+	UFUNCTION(BlueprintCallable)
+		void DebugPathStartEnd(FVector WorldLocation);
+	
 	
 protected:
 	// Called when the game starts or when spawned
@@ -119,29 +77,25 @@ protected:
 
 	void GenerateGraph();
 
-	//TArray<FCPathNode*> GetAllNeighbours; 
-
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
-	//Main array of nodes, used by pathfinding
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Graph)
-		TArray<FCPathNode> Nodes;
-
 	CPathOctree* Octrees = nullptr;
 
 	virtual void BeginDestroy() override;
-
 	
-
 private:
 
 	//position of the first voxel
 	FVector StartPosition;
 
-	// For generating children
-	static const FVector ChildPositionOffsetMaskByIndex[8];
+	// Lookup tables
+	static const FVector LookupTable_ChildPositionOffsetMaskByIndex[8];
+	static const FVector LookupTable_NeighbourOffsetByDirection[6];
+
+	// Positive values = ChildIndex of the same parent, negative values = (-ChildIndex - 1) of neighbour at Direction [6]
+	static const int8 LookupTable_NeighbourChildIndex[8][6];
 	
 	//Trace handles still waiting for execution
 
@@ -154,45 +108,77 @@ private:
 
 	void ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentTreeID, FVector TreeLocation);
 
-	void UpdateNeighbours(FCPathNode& Node);
+	void AfterTracePreprocess();
+
+	void UpdateNeighbours(CPathOctree* Tree, uint32 TreeID);
 	
-	TArray<int> GetAdjacentIndexes(int Index) const;
+public:
+	//----------- TreeID ------------------------------------------------------------------------
 
-	// Returns the X Y and Z relative to StartPosition and divided by VoxelSize. Multiply them to get the index. NO BOUNDS CHECK
-	inline FVector GetXYZFromPosition(FVector WorldLocation) const;
+	// Returns the child with this tree id, or his parent at DepthReached in case the child doesnt exist
+	CPathOctree* FindTreeByID(uint32 TreeID, uint32& DepthReached);
 
-	// Returns an index in the Octree array from world position. NO BOUNDS CHECK
-	inline int GetIndexFromPosition(FVector WorldLocation) const;
+	// Returns a tree and its TreeID by world location, returns null if location outside of volume
+	CPathOctree* FindTreeByWorldLocation(FVector WorldLocation, uint32& TreeID);
 
-	// takes in what `GetXYZFromPosition` returns and performs a bounds check
-	bool IsInBounds(FVector XYZ) const;
+	// Returns a neighbour of the tree with TreeID in given direction, also returns  TreeID if the neighbour if found
+	CPathOctree* FindNeighbourByID(uint32 TreeID, ENeighbourDirection Direction, uint32& NeighbourID);
 
-	inline float GetIndexFromXYZ(FVector V) const;
+	// Returns world location of a voxel at this TreeID. This returns CENTER of the voxel
+	inline FVector WorldLocationFromTreeID(uint32 TreeID) const;
 
-	inline float GetVoxelSizeByDepth(int Depth) const;
+	inline FVector LocalCoordsInt3FromOuterIndex(uint32 OuterIndex) const;
 
 	// Creates TreeID for AsyncOverlapByChannel
 	inline uint32 CreateTreeID(uint32 Index, uint32 Depth) const;
 
-	inline uint32 GetOuterIndex(uint32 TreeID) const;
+	// Extracts Octrees array index from TreeID
+	inline uint32 ExtractOuterIndex(uint32 TreeID) const;
 
-	inline void SetDepth(uint32& TreeID, uint32 NewDepth);
+	// Replaces Depth in the TreeID with NewDepth
+	inline void ReplaceDepth(uint32& TreeID, uint32 NewDepth);
 
-	inline uint32 GetDepth(uint32 TreeID) const;
+	// Extracts depth from TreeID
+	inline uint32 ExtractDepth(uint32 TreeID) const;
 
-	// Returns a number from  0 to 7 - a child index at required depth from the params
-	inline uint32 GetChildIndex(uint32 TreeID, uint32 Depth) const;
+	// Returns a number from  0 to 7 - a child index at requested Depth
+	inline uint32 ExtractChildIndex(uint32 TreeID, uint32 Depth) const;
 
 	// This assumes that child index at Depth is 000, if its not use ReplaceChildIndex
-	inline void SetChildIndex(uint32& TreeID, uint32 Depth, uint32 ChildIndex);
+	inline void AddChildIndex(uint32& TreeID, uint32 Depth, uint32 ChildIndex);
 
 	// Replaces child index at given depth
 	inline void ReplaceChildIndex(uint32& TreeID, uint32 Depth, uint32 ChildIndex);
 
-	// Returns the child with this tree id, or his parent at DepthReached in case the child doesnt exist
-	CPathOctree* GetOctreeFromID(uint32 TreeID, uint32& DepthReached);
+	// Replaces child index at given depth and also replaces depth to the same one
+	inline void ReplaceChildIndexAndDepth(uint32& TreeID, uint32 Depth, uint32 ChildIndex);
 
-	inline FVector GetWorldPositionFromTreeID(uint32 TreeID) const;
+
+
+
+	// ----------- Other helper functions ---------------------
+
+	inline float GetVoxelSizeByDepth(int Depth) const;
+
+private:
+
+	// Returns an index in the Octree array from world position. NO BOUNDS CHECK
+	inline int WorldLocationToIndex(FVector WorldLocation) const;
+
+	// Multiplies local integer coordinates into index
+	inline float LocalCoordsInt3ToIndex(FVector V) const;
+
+	// Returns the X Y and Z relative to StartPosition and divided by VoxelSize. Multiply them to get the index. NO BOUNDS CHECK
+	inline FVector WorldLocationToLocalCoordsInt3(FVector WorldLocation) const;
+
+	// takes in what `WorldLocationToLocalCoordsInt3` returns and performs a bounds check
+	inline bool IsInBounds(FVector LocalCoordsInt3) const;
+
+	bool IsInBounds(int OuterIndex) const;
+
+	FVector DebugPathStart;
+	bool HasDebugPathStarted = false;
+
 
 
 	std::chrono::steady_clock::time_point GenerationStart;

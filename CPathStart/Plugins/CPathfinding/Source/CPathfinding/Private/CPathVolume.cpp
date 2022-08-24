@@ -5,7 +5,7 @@
 
 #include "DrawDebugHelpers.h"
 #include "Components/BoxComponent.h"
-
+#include "CPathAStar.h" // this is for debugging only, remove later
 
 
 // Sets default values
@@ -18,7 +18,7 @@ ACPathVolume::ACPathVolume()
 }
 
 
-const FVector ACPathVolume::ChildPositionOffsetMaskByIndex[8] =
+const FVector ACPathVolume::LookupTable_ChildPositionOffsetMaskByIndex[8] =
 {	{-1, -1, -1},
 	{-1, 1, -1},
 	{-1, -1, 1},
@@ -29,18 +29,27 @@ const FVector ACPathVolume::ChildPositionOffsetMaskByIndex[8] =
 	{1, -1, 1},
 	{1, 1, 1} };
 
-FCPathNode& ACPathVolume::GetNodeFromPosition(FVector WorldLocation, bool& IsValid)
+
+void ACPathVolume::DebugPathStartEnd(FVector WorldLocation)
 {
-	FVector XYZ = GetXYZFromPosition(WorldLocation);
-	IsValid = IsInBounds(XYZ);
 	
-	if(IsValid)
+	if (!IsInBounds(WorldLocationToLocalCoordsInt3(WorldLocation)))
+		return;
+
+	if (HasDebugPathStarted)
 	{
-		return Nodes[GetIndexFromXYZ(XYZ)];	
+		HasDebugPathStarted = false;
+		CPathAStar AStar;
+
+		auto Path = AStar.FindPath(this, DebugPathStart, WorldLocation);
+		AStar.DrawPath(Path);
+		
 	}
-
-	return Nodes[0];
-
+	else
+	{
+		DebugPathStart = WorldLocation;
+		HasDebugPathStarted = true;
+	}
 }
 
 // Called when the game starts or when spawned
@@ -60,7 +69,7 @@ void ACPathVolume::BeginPlay()
 	NodeCount[1] = FMath::CeilToInt(VolumeBox->GetScaledBoxExtent().Y * 2.0 / Divider);
 	NodeCount[2] = FMath::CeilToInt(VolumeBox->GetScaledBoxExtent().Z * 2.0 / Divider);
 
-	checkf(OctreeDepth < 16 && OctreeDepth > 0, TEXT("CPATH - Graph Generation:::OctreeDepth must be within 0 and 15"));
+	checkf(OctreeDepth < 5 && OctreeDepth >= 0, TEXT("CPATH - Graph Generation:::OctreeDepth must be within 0 and 15"));
 
 	for (int i = 0; i <= OctreeDepth; i++)
 	{
@@ -114,8 +123,7 @@ void ACPathVolume::GenerateGraph()
 			for (uint32 z = 0; z < NodeCount[2]; z++)
 			{
 				FVector Location = FVector(StartPosition + FVector(x, y, z) * CurrVoxelSize);
-				//Nodes.Add(FCPathNode(Index, Location));
-
+				
 				TraceHandlesCurr->push_back(GetWorld()->AsyncOverlapByChannel(
 					Location,
 					FQuat(FRotator::ZeroRotator),
@@ -160,12 +168,12 @@ void ACPathVolume::Tick(float DeltaTime)
 				//TraceHandles.RemoveAt(i);
 				//TraceHandles.RemoveAtSwap(i);
 
-				Index = GetOuterIndex(OverlapDatum.UserData);
-				Depth = GetDepth(OverlapDatum.UserData);
+				Index = ExtractOuterIndex(OverlapDatum.UserData);
+				Depth = ExtractDepth(OverlapDatum.UserData);
 				VoxelCountAtDepth[Depth]++;
 				
 				uint32 DepthReached;
-				CPathOctree* TracedTree =  GetOctreeFromID(OverlapDatum.UserData, DepthReached);
+				CPathOctree* TracedTree =  FindTreeByID(OverlapDatum.UserData, DepthReached);
 
 				checkf(DepthReached == Depth, TEXT("CPATH - Graph Generation:::Tracing - DepthReached not equal Depth passed in UserData"));
 
@@ -184,12 +192,12 @@ void ACPathVolume::Tick(float DeltaTime)
 				if(OverlapDatum.OutOverlaps.Num() > 0)
 				{
 					if(DepthsToDraw[Depth])
-						DrawDebugBox(GetWorld(), GetWorldPositionFromTreeID(OverlapDatum.UserData), FVector(GetVoxelSizeByDepth(Depth) /2), FColor::Red, true, 10);
+						DrawDebugBox(GetWorld(), WorldLocationFromTreeID(OverlapDatum.UserData), FVector(GetVoxelSizeByDepth(Depth) / 2.f), FColor::Red, true, 10);
 				}
 				else
 				{
 					if (DepthsToDraw[Depth])
-						DrawDebugBox(GetWorld(), GetWorldPositionFromTreeID(OverlapDatum.UserData), FVector(GetVoxelSizeByDepth(Depth) / 2), FColor::Green, true, 10);
+						DrawDebugBox(GetWorld(), WorldLocationFromTreeID(OverlapDatum.UserData), FVector(GetVoxelSizeByDepth(Depth) / (2.f)), FColor::Green, true, 10);
 					//UpdateNeighbours(Nodes[OverlapDatum.UserData]);
 				}
 				
@@ -215,8 +223,9 @@ void ACPathVolume::Tick(float DeltaTime)
 		if (PrintGenerationTime)
 		{
 			auto b = TIMEDIFF(GenerationStart, TIMENOW);
-			UE_LOG(LogTemp, Warning, TEXT("Total generation time - %lf ms"), b);
+			UE_LOG(LogTemp, Warning, TEXT("Total trace time - %lf ms"), b);
 			PrintGenerationTime = false;
+			AfterTracePreprocess();
 		}
 	}
 
@@ -238,7 +247,7 @@ void ACPathVolume::BeginDestroy()
 void ACPathVolume::ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentTreeID, FVector TreeLocation)
 {
 
-	uint32 NewDepth = GetDepth(CurrentTreeID) + 1;
+	uint32 NewDepth = ExtractDepth(CurrentTreeID) + 1;
 
 	TreeToExpand->Children = new CPathOctree[8];
 
@@ -251,16 +260,14 @@ void ACPathVolume::ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentTreeID,
 	for (uint32 ChildIndex = 0; ChildIndex < 8; ChildIndex++)
 	{
 
-		FVector Location = TreeLocation + ChildPositionOffsetMaskByIndex[ChildIndex] * CurrHalfSize;
+		FVector Location = TreeLocation + LookupTable_ChildPositionOffsetMaskByIndex[ChildIndex] * CurrHalfSize;
 
 		//TreeToExpand->Children[ChildIndex].Depth = NewDepth;
 		uint32 TreeID = CurrentTreeID;
 
-		SetDepth(TreeID, NewDepth);
-		SetChildIndex(TreeID, NewDepth, ChildIndex);
+		ReplaceDepth(TreeID, NewDepth);
+		AddChildIndex(TreeID, NewDepth, ChildIndex);
 
-		
-		
 
 		TraceHandlesNext->push_back(GetWorld()->AsyncOverlapByChannel(
 			Location,
@@ -283,48 +290,46 @@ void ACPathVolume::ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentTreeID,
 	}
 }
 
-void ACPathVolume::UpdateNeighbours(FCPathNode& Node)
+void ACPathVolume::AfterTracePreprocess()
 {
-	TArray<int> Indexes = GetAdjacentIndexes(Node.Index);
-	for (int Index : Indexes)
+	for (uint32 i = 0; i < (uint32)VoxelCountAtDepth[0]; i++)
 	{
-		if(Nodes[Index].IsFree)
+		if (Octrees[i].Children)
 		{
-			Nodes[Index].FreeNeighbors.Add(&Nodes[Node.Index]);
-			Node.FreeNeighbors.Add(&Nodes[Index]);
-			if(DrawConnections)
-				DrawDebugLine(GetWorld(), Node.WorldLocation, Nodes[Index].WorldLocation, FColor::Orange, true, 10);
-		}
-	}
-	
-}
-
-
-TArray<int> ACPathVolume::GetAdjacentIndexes(int Index) const
-{
-	FVector XYZ = GetXYZFromPosition(Nodes[Index].WorldLocation);
-
-	TArray<int> Indexes;
-	Indexes.Reserve(6);
-	
-	for(int Comp = 0; Comp < 3; Comp++)
-	{
-		for(int Sign = -1; Sign < 2; Sign += 2)
-		{
-			FVector NewXYZ = XYZ;
-			NewXYZ[Comp] += Sign;
-			if(IsInBounds(NewXYZ))
+			for (uint32 j = 0; j < 8; j++)
 			{
-				Indexes.Add(GetIndexFromXYZ(NewXYZ));
+				uint32 TreeId = i;
+				ReplaceChildIndexAndDepth(TreeId, 1, j);
+				//UpdateNeighbours(&Octrees[i].Children[j], TreeId);
 			}
-
+			
 		}
+		
 	}
-	
-	return Indexes;
 }
 
-FVector ACPathVolume::GetXYZFromPosition(FVector WorldLocation) const
+void ACPathVolume::UpdateNeighbours(CPathOctree* Tree, uint32 TreeID)
+{
+	
+	for (int Direction = 0; Direction < 6; Direction++)
+	{
+		uint32 NeighbourID;
+		CPathOctree* Neighbour = FindNeighbourByID(TreeID, (ENeighbourDirection)Direction, NeighbourID);
+		if (Neighbour)
+		{
+			FVector Position = WorldLocationFromTreeID(NeighbourID);
+			Position += FVector(0, 0, (GetVoxelSizeByDepth(1) / 16.f) * (Neighbour->VisitCounter - 3.5));
+			DrawDebugSphere(GetWorld(), Position, GetVoxelSizeByDepth(1) / 32.f, 10, FColor::Cyan, true);
+			Neighbour->VisitCounter++;
+			//Neighbour = FindNeighbourByID(TreeID, (ENeighbourDirection)Direction, NeighbourID);
+		}
+
+	}
+	
+}
+
+
+FVector ACPathVolume::WorldLocationToLocalCoordsInt3(FVector WorldLocation) const
 {
 	FVector RelativePos = WorldLocation - StartPosition;
 	RelativePos = RelativePos / GetVoxelSizeByDepth(0);
@@ -334,13 +339,13 @@ FVector ACPathVolume::GetXYZFromPosition(FVector WorldLocation) const
 	
 }
 
-int ACPathVolume::GetIndexFromPosition(FVector WorldLocation) const
+int ACPathVolume::WorldLocationToIndex(FVector WorldLocation) const
 {
-	FVector XYZ = GetXYZFromPosition(WorldLocation);
-	return GetIndexFromXYZ(XYZ);
+	FVector XYZ = WorldLocationToLocalCoordsInt3(WorldLocation);
+	return LocalCoordsInt3ToIndex(XYZ);
 }
 
-bool ACPathVolume::IsInBounds(FVector XYZ) const
+inline bool ACPathVolume::IsInBounds(FVector XYZ) const
 {
 	if(XYZ.X < 0 || XYZ.X >= NodeCount[0])
 		return false;
@@ -354,7 +359,16 @@ bool ACPathVolume::IsInBounds(FVector XYZ) const
 	return true;
 }
 
-float ACPathVolume::GetIndexFromXYZ(FVector V) const
+bool ACPathVolume::IsInBounds(int OuterIndex) const
+{	
+#if WITH_EDITOR
+		checkf(OuterIndex < (VoxelCountAtDepth[0]<<1), TEXT("CPATH - Graph Generation:::IsInBounds - Outer index was not extracted"));
+#endif
+
+	return OuterIndex < VoxelCountAtDepth[0] && OuterIndex >= 0;
+}
+
+float ACPathVolume::LocalCoordsInt3ToIndex(FVector V) const
 {
 	return (V.X * (NodeCount[1] * NodeCount[2])) + (V.Y * NodeCount[2]) + V.Z;
 }
@@ -378,12 +392,12 @@ inline uint32 ACPathVolume::CreateTreeID(uint32 Index, uint32 Depth) const
 	return Index;
 }
 
-inline uint32 ACPathVolume::GetOuterIndex(uint32 TreeID) const
+inline uint32 ACPathVolume::ExtractOuterIndex(uint32 TreeID) const
 {
 	return TreeID & 0x0000FFFF;
 }
 
-inline void ACPathVolume::SetDepth(uint32& TreeID, uint32 NewDepth)
+inline void ACPathVolume::ReplaceDepth(uint32& TreeID, uint32 NewDepth)
 {
 #if WITH_EDITOR
 	checkf(NewDepth < 5, TEXT("CPATH - Graph Generation:::DEPTH can be up to 4"));
@@ -394,12 +408,12 @@ inline void ACPathVolume::SetDepth(uint32& TreeID, uint32 NewDepth)
 }
 
 
-inline uint32 ACPathVolume::GetDepth(uint32 TreeID) const
+inline uint32 ACPathVolume::ExtractDepth(uint32 TreeID) const
 {
 	return (TreeID & 0x00070000) >> 16;
 }
 
-inline uint32 ACPathVolume::GetChildIndex(uint32 TreeID, uint32 Depth) const
+inline uint32 ACPathVolume::ExtractChildIndex(uint32 TreeID, uint32 Depth) const
 {
 #if WITH_EDITOR
 	checkf(Depth < 5 && Depth > 0, TEXT("CPATH - Graph Generation:::DEPTH can be up to 4"));
@@ -410,7 +424,7 @@ inline uint32 ACPathVolume::GetChildIndex(uint32 TreeID, uint32 Depth) const
 	return (TreeID & Mask) >> DepthOffset;
 }
 
-inline void ACPathVolume::SetChildIndex(uint32& TreeID, uint32 Depth, uint32 ChildIndex)
+inline void ACPathVolume::AddChildIndex(uint32& TreeID, uint32 Depth, uint32 ChildIndex)
 {
 #if WITH_EDITOR
 	checkf(Depth < 5 && Depth > 0, TEXT("CPATH - Graph Generation:::DEPTH can be up to 4"));
@@ -422,25 +436,26 @@ inline void ACPathVolume::SetChildIndex(uint32& TreeID, uint32 Depth, uint32 Chi
 	TreeID |= ChildIndex;
 }
 
-FVector ACPathVolume::GetWorldPositionFromTreeID(uint32 TreeID) const
+FVector ACPathVolume::WorldLocationFromTreeID(uint32 TreeID) const
 {
-	uint32 OuterIndex = GetOuterIndex(TreeID);
-	uint32 Depth = GetDepth(TreeID);
-
-	uint32 X = OuterIndex / (NodeCount[1] * NodeCount[2]);
-	OuterIndex -= X * NodeCount[1] * NodeCount[2];
-	uint32 Y = OuterIndex / NodeCount[2];
-	uint32 Z = OuterIndex % NodeCount[2];
-
-	FVector CurrPosition = StartPosition + GetVoxelSizeByDepth(0) * FVector(X, Y, Z);
-
+	uint32 OuterIndex = ExtractOuterIndex(TreeID);
+	uint32 Depth = ExtractDepth(TreeID);
+		
+	FVector CurrPosition = StartPosition + GetVoxelSizeByDepth(0) * LocalCoordsInt3FromOuterIndex(OuterIndex);
 
 	for (uint32 CurrDepth = 1; CurrDepth <= Depth; CurrDepth++)
 	{
-		CurrPosition += GetVoxelSizeByDepth(CurrDepth) * 0.5f * ChildPositionOffsetMaskByIndex[GetChildIndex(TreeID, CurrDepth)];
+		CurrPosition += GetVoxelSizeByDepth(CurrDepth) * 0.5f * LookupTable_ChildPositionOffsetMaskByIndex[ExtractChildIndex(TreeID, CurrDepth)];
 	}
 
 	return CurrPosition;
+}
+
+inline FVector ACPathVolume::LocalCoordsInt3FromOuterIndex(uint32 OuterIndex) const
+{
+	uint32 X = OuterIndex / (NodeCount[1] * NodeCount[2]);
+	OuterIndex -= X * NodeCount[1] * NodeCount[2];
+	return FVector(X, OuterIndex / NodeCount[2], OuterIndex % NodeCount[2]);
 }
 
 inline void ACPathVolume::ReplaceChildIndex(uint32& TreeID, uint32 Depth, uint32 ChildIndex)
@@ -459,10 +474,28 @@ inline void ACPathVolume::ReplaceChildIndex(uint32& TreeID, uint32 Depth, uint32
 	TreeID |= ChildIndex;
 }
 
-CPathOctree* ACPathVolume::GetOctreeFromID(uint32 TreeID, uint32& DepthReached)
+inline void ACPathVolume::ReplaceChildIndexAndDepth(uint32& TreeID, uint32 Depth, uint32 ChildIndex)
 {
-	uint32 Depth = GetDepth(TreeID);
-	CPathOctree* CurrTree = &Octrees[GetOuterIndex(TreeID)];
+#if WITH_EDITOR
+	checkf(Depth < 5 && Depth > 0, TEXT("CPATH - Graph Generation:::DEPTH can be up to 4"));
+	checkf(ChildIndex < 8, TEXT("CPATH - Graph Generation:::Child Index can be up to 7"));
+#endif
+
+	uint32 DepthOffset = Depth * 3 + 19;
+
+	// Clearing previous child index
+	TreeID &= ~(0x00000007 << DepthOffset);
+
+	ChildIndex <<= DepthOffset;
+	TreeID |= ChildIndex;
+	ReplaceDepth(TreeID, Depth);
+}
+
+
+CPathOctree* ACPathVolume::FindTreeByID(uint32 TreeID, uint32& DepthReached)
+{
+	uint32 Depth = ExtractDepth(TreeID);
+	CPathOctree* CurrTree = &Octrees[ExtractOuterIndex(TreeID)];
 	DepthReached = 0;
 
 	for (uint32 CurrDepth = 1; CurrDepth <= Depth; CurrDepth++)
@@ -473,9 +506,94 @@ CPathOctree* ACPathVolume::GetOctreeFromID(uint32 TreeID, uint32& DepthReached)
 			break;
 		}
 
-		CurrTree = &CurrTree->Children[GetChildIndex(TreeID, CurrDepth)];
+		CurrTree = &CurrTree->Children[ExtractChildIndex(TreeID, CurrDepth)];
 		DepthReached = CurrDepth;
 	}
 	return CurrTree;
+}
+
+CPathOctree* ACPathVolume::FindTreeByWorldLocation(FVector WorldLocation, uint32& TreeID)
+{
+	FVector LocalCoords = WorldLocationToLocalCoordsInt3(WorldLocation);
+	if(!IsInBounds(LocalCoords))
+		return nullptr;
+
+	TreeID = LocalCoordsInt3ToIndex(LocalCoords);
+	return &Octrees[TreeID];
+}
+
+
+const FVector ACPathVolume::LookupTable_NeighbourOffsetByDirection[6] =
+{	{0, -1, 0},
+	{-1, 0, 0},
+	{0, 1, 0},
+	{1, 0, 0},
+	{0, 0, -1},
+	{0, 0, 1}};
+
+const int8 ACPathVolume::LookupTable_NeighbourChildIndex[8][6] =
+{	{-2, -5, 1, 4, -3, 2},
+	{0, -6, -1, 5, -4, 3},
+	{-4, -7, 3, 6, 0, -1},
+	{2, -8, -3, 7, 1, -2},
+	{-6, 0, 5, -1, -7, 6},
+	{4, 1, -5, -2, -8, 7},
+	{-8, 2, 7, -3, 4, -5},
+	{6, 3, -7, -4, 5, -6},
+};
+
+
+CPathOctree* ACPathVolume::FindNeighbourByID(uint32 TreeID, ENeighbourDirection Direction, uint32& NeighbourID)
+{
+
+	// Depth 0, getting neighbour from Octrees
+	uint32 Depth = ExtractDepth(TreeID);
+	if (Depth == 0)
+	{
+		int OuterIndex = ExtractOuterIndex(TreeID);
+		FVector NeighbourLocalCoords = LocalCoordsInt3FromOuterIndex(OuterIndex) + LookupTable_NeighbourOffsetByDirection[Direction];
+		
+		if (!IsInBounds(NeighbourLocalCoords))
+			return nullptr;
+
+		NeighbourID = LocalCoordsInt3ToIndex(NeighbourLocalCoords);
+		return &Octrees[NeighbourID];
+	}
+
+	uint8 ChildIndex = ExtractChildIndex(TreeID, Depth);
+	int8 NeighbourChildIndex = LookupTable_NeighbourChildIndex[ChildIndex][Direction];
+	
+	// The neighbour a is child of the same octree
+	if (NeighbourChildIndex >= 0)
+	{
+		NeighbourID = TreeID;
+		ReplaceChildIndex(NeighbourID, Depth, NeighbourChildIndex);
+		CPathOctree* Neighbour = FindTreeByID(NeighbourID, Depth);
+		ReplaceDepth(NeighbourID, Depth);
+		return Neighbour;
+	} 
+	else
+	{	// Getting the neighbour of parent Octree and then its correct child
+		ReplaceDepth(TreeID, Depth - 1);
+		CPathOctree* NeighbourOfParent = FindNeighbourByID(TreeID, Direction, NeighbourID);
+		if (NeighbourOfParent)
+		{
+			if (NeighbourOfParent->Children)
+			{
+				// Look at the description of LookupTable_NeighbourChildIndex
+				NeighbourChildIndex = -1 * NeighbourChildIndex - 1;
+				ReplaceDepth(NeighbourID, Depth);
+				ReplaceChildIndex(NeighbourID, Depth, NeighbourChildIndex);
+				return &NeighbourOfParent->Children[NeighbourChildIndex];
+			}
+			else
+			{
+				// NeighbourID is already correct from calling FindNeighbourByID
+				return NeighbourOfParent;
+			}
+		}
+	}
+
+	return nullptr;
 }
 

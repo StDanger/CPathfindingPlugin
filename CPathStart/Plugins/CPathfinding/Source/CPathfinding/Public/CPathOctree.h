@@ -8,7 +8,7 @@
  * 
  */
 
-enum NeighbourDirection
+enum ENeighbourDirection
 {
 	Left,
 	Front,
@@ -29,8 +29,9 @@ public:
 	bool IsFree = false;
 
 	uint32 Data = 0;
-
-	//char FreeNeighbours = 0;
+	
+	//for debugging, delete later
+	char VisitCounter = 0;
 
 	//char Depth = 0;
 
