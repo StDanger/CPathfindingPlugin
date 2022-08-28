@@ -111,6 +111,7 @@ private:
 	void AfterTracePreprocess();
 
 	void UpdateNeighbours(CPathOctree* Tree, uint32 TreeID);
+
 	
 public:
 	//----------- TreeID ------------------------------------------------------------------------
@@ -123,6 +124,12 @@ public:
 
 	// Returns a neighbour of the tree with TreeID in given direction, also returns  TreeID if the neighbour if found
 	CPathOctree* FindNeighbourByID(uint32 TreeID, ENeighbourDirection Direction, uint32& NeighbourID);
+
+	// Returns a list of free neighbours as TreeIDs
+	std::vector<uint32> FindAllFreeNeighbours(uint32 TreeID);
+
+	// Returns a parent of tree with given TreeID or null if TreeID has depth of 0
+	inline CPathOctree* GetParentTree(uint32 TreeId);
 
 	// Returns world location of a voxel at this TreeID. This returns CENTER of the voxel
 	inline FVector WorldLocationFromTreeID(uint32 TreeID) const;
@@ -152,6 +159,8 @@ public:
 
 	// Replaces child index at given depth and also replaces depth to the same one
 	inline void ReplaceChildIndexAndDepth(uint32& TreeID, uint32 Depth, uint32 ChildIndex);
+
+	
 
 
 

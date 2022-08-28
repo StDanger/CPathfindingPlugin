@@ -18,10 +18,16 @@ public:
 
 	}
 
-	uint32 TreeID;
+	uint32 TreeID = 0xFFFFFFFF;
 
+	// We want to find a node with minimum fitness, this way distance doesnt have to be inverted
 	float FitnessResult = 9999999999.f;
 
+	// This is valid ONLY during A*, probably a temporary solution
+	CPathNode* PreviousNode = nullptr;
+
+
+	// ------ Operators for containers ----------------------------------------
     bool operator <(const CPathNode& Rhs) const
 	{
         return FitnessResult < Rhs.FitnessResult;
@@ -34,8 +40,16 @@ public:
 
 	bool operator ==(const CPathNode& Rhs) const
 	{
-		return FitnessResult == Rhs.FitnessResult;
+		return TreeID == Rhs.TreeID;
 	}
+
+	struct Hash
+	{
+		size_t operator()(const CPathNode& Node) const
+		{
+			return Node.TreeID;
+		}
+	};
 
 	~CPathNode();
 };

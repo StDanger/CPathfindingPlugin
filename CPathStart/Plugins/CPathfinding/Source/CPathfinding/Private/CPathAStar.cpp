@@ -4,6 +4,7 @@
 #include "CPathAStar.h"
 #include "CPathVolume.h"
 #include "DrawDebugHelpers.h"
+#include <memory>
 
 
 CPathAStar::CPathAStar()
@@ -20,39 +21,97 @@ TArray<CPathNode> CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, F
 	Graph = VolumeRef;
 	TargetLocation = End;
 	uint32 TempID;
-	Graph->FindTreeByWorldLocation(Start, TempID);
 
-	CPathNode StartNode(TempID);
-
-	Graph->FindTreeByWorldLocation(End, TempID);
-
-	CPathNode EndNode(TempID);
-	
-	CalcFitness(EndNode);
-	CalcFitness(StartNode);
-	CPathNode RandomNodeA(0);
-	CPathNode RandomNodeB(3);
-	CalcFitness(RandomNodeB);
-	CalcFitness(RandomNodeA);
-
+	TArray<CPathNode> FoundPath;
 	std::priority_queue<CPathNode, std::vector<CPathNode>, std::greater<CPathNode>> Pq;
 
-	//Pq.push(CPathNode(2));
-	//Pq.push(CPathNode(5));
-	Pq.push(EndNode);
-	Pq.push(RandomNodeB);
-	Pq.push(StartNode);
-	Pq.push(RandomNodeA);
-	//Pq.push(CPathNode(8));
+	// Nodes visited OR added to priority queue
+	std::unordered_set<CPathNode, CPathNode::Hash> VisitedNodes;
 
-	TArray<CPathNode> ReturnArray;
+	// Nodes that went out of priority queue
+	std::vector<std::unique_ptr<CPathNode>> ProcessedNodes;
+
+	// Finding start and end node
+	if (!Graph->FindTreeByWorldLocation(Start, TempID))
+		return FoundPath;
+	CPathNode StartNode(TempID);
+
+	if(!Graph->FindTreeByWorldLocation(End, TempID))
+		return FoundPath;
+	CPathNode TargetNode(TempID);
+	CalcFitness(TargetNode);
+	CalcFitness(StartNode);
+	
+	
+
+	Pq.push(StartNode);
+	VisitedNodes.insert(StartNode);
+	
+	CPathNode* FoundPathEnd = nullptr;
 
 	while (Pq.size() > 0)
 	{
-		ReturnArray.Add(Pq.top());
+		CPathNode CurrentNode = Pq.top();
 		Pq.pop();
+		ProcessedNodes.push_back(std::make_unique<CPathNode>(CurrentNode));
+		//VisitedNodes.insert(CurrentNode);
+		
+		
+
+		if (CurrentNode == TargetNode)
+		{
+			FoundPathEnd = ProcessedNodes.back().get();
+			//TargetNode = *VisitedNodes.find(CurrentNode);
+			break;
+		}
+		
+		std::vector<uint32> Neighbours = VolumeRef->FindAllFreeNeighbours(CurrentNode.TreeID);
+
+		for (uint32 NewTreeID : Neighbours)
+		{
+			CPathNode NewNode(NewTreeID);
+			if (!VisitedNodes.count(NewNode))
+			{
+				//NewNode.PreviousNodeID = CurrentNode.TreeID;
+				NewNode.PreviousNode = ProcessedNodes.back().get();
+
+				CalcFitness(NewNode);
+
+				VisitedNodes.insert(NewNode);
+				Pq.push(NewNode);
+			}
+		}
+		
 	}
-	return ReturnArray;
+	
+	int debugCounter = 0;
+
+
+	if (FoundPathEnd)
+	{
+		while (FoundPathEnd)
+		{
+			
+			FoundPath.Add(*FoundPathEnd);
+			FoundPathEnd = FoundPathEnd->PreviousNode;
+		}
+
+
+		/*while (!(TargetNode == StartNode))
+		{
+			debugCounter++;
+			if (debugCounter > 20)
+			{
+				debugCounter = 0;
+			}
+			FoundPath.Add(TargetNode);
+			TargetNode = *VisitedNodes.find(CPathNode(TargetNode.PreviousNodeID));
+		}
+		FoundPath.Add(StartNode);*/
+	}
+	
+	
+	return FoundPath;
 }
 
 void CPathAStar::DrawPath(const TArray<CPathNode>& Path) const
@@ -71,4 +130,8 @@ float CPathAStar::EucDistance(CPathNode& Node, FVector Target) const
 void CPathAStar::CalcFitness(CPathNode& Node)
 {
 	Node.FitnessResult = EucDistance(Node, TargetLocation);
+	if (Node.PreviousNode)
+	{
+		Node.FitnessResult += Node.PreviousNode->FitnessResult;
+	}
 }

@@ -26,7 +26,7 @@ public:
 
 	//bool IsLeaf = false
 
-	bool IsFree = false;
+	//bool IsFree = false;
 
 	uint32 Data = 0;
 	
@@ -41,7 +41,16 @@ public:
 	CPathOctree* Children = nullptr;
 
 
+	inline void SetIsFree(bool Free)
+	{
+		Data &= 0xFFFFFFFE;
+		Data |= (uint32)Free;
+	}
 
+	inline bool GetIsFree() const
+	{
+		return Data << 31;
+	}
 
 	~CPathOctree()
 	{

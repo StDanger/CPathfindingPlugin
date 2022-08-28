@@ -177,11 +177,11 @@ void ACPathVolume::Tick(float DeltaTime)
 
 				checkf(DepthReached == Depth, TEXT("CPATH - Graph Generation:::Tracing - DepthReached not equal Depth passed in UserData"));
 
-				TracedTree->IsFree = OverlapDatum.OutOverlaps.Num() == 0;
+				TracedTree->SetIsFree(OverlapDatum.OutOverlaps.Num() == 0);
 
 				if (Depth < (uint32)OctreeDepth)
 				{
-					if (!TracedTree->IsFree)
+					if (!TracedTree->GetIsFree())
 					{
 						ExpandOctree(TracedTree, OverlapDatum.UserData, OverlapDatum.Pos);
 						TracesAdded += 8;
@@ -418,7 +418,7 @@ inline uint32 ACPathVolume::ExtractChildIndex(uint32 TreeID, uint32 Depth) const
 #if WITH_EDITOR
 	checkf(Depth < 5 && Depth > 0, TEXT("CPATH - Graph Generation:::DEPTH can be up to 4"));
 #endif
-	uint32 DepthOffset = Depth * 3 + 19;
+	uint32 DepthOffset = Depth * 3 + 16;
 	uint32 Mask = 0x00000007 << DepthOffset;
 
 	return (TreeID & Mask) >> DepthOffset;
@@ -431,7 +431,7 @@ inline void ACPathVolume::AddChildIndex(uint32& TreeID, uint32 Depth, uint32 Chi
 	checkf(ChildIndex < 8, TEXT("CPATH - Graph Generation:::Child Index can be up to 7"));
 #endif
 	
-	ChildIndex <<= Depth * 3 + 19;
+	ChildIndex <<= Depth * 3 + 16;
 
 	TreeID |= ChildIndex;
 }
@@ -465,7 +465,7 @@ inline void ACPathVolume::ReplaceChildIndex(uint32& TreeID, uint32 Depth, uint32
 	checkf(ChildIndex < 8, TEXT("CPATH - Graph Generation:::Child Index can be up to 7"));
 #endif
 
-	uint32 DepthOffset = Depth * 3 + 19;
+	uint32 DepthOffset = Depth * 3 + 16;
 
 	// Clearing previous child index
 	TreeID &= ~(0x00000007 << DepthOffset);
@@ -481,7 +481,7 @@ inline void ACPathVolume::ReplaceChildIndexAndDepth(uint32& TreeID, uint32 Depth
 	checkf(ChildIndex < 8, TEXT("CPATH - Graph Generation:::Child Index can be up to 7"));
 #endif
 
-	uint32 DepthOffset = Depth * 3 + 19;
+	uint32 DepthOffset = Depth * 3 + 16;
 
 	// Clearing previous child index
 	TreeID &= ~(0x00000007 << DepthOffset);
@@ -594,6 +594,38 @@ CPathOctree* ACPathVolume::FindNeighbourByID(uint32 TreeID, ENeighbourDirection 
 		}
 	}
 
+	return nullptr;
+}
+
+std::vector<uint32> ACPathVolume::FindAllFreeNeighbours(uint32 TreeID)
+{
+	std::vector<uint32> FreeNeighbours;
+
+	for (int Direction = 0; Direction < 6; Direction++)
+	{
+		uint32 TempId = 0;
+		CPathOctree* Neighbour = FindNeighbourByID(TreeID, (ENeighbourDirection)Direction, TempId);
+		if (Neighbour)
+		{
+			if (Neighbour->GetIsFree())
+			{
+				FreeNeighbours.push_back(TempId);
+			}
+		}
+	}
+
+
+	return FreeNeighbours;
+}
+
+inline CPathOctree* ACPathVolume::GetParentTree(uint32 TreeId)
+{
+	uint32 Depth = ExtractDepth(TreeId);
+	if (Depth)
+	{
+		ReplaceDepth(TreeId, Depth - 1);
+		return FindTreeByID(TreeId, Depth);
+	}
 	return nullptr;
 }
 

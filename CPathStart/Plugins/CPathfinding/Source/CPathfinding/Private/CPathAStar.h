@@ -6,6 +6,7 @@
 #include <CPathNode.h>
 #include <queue>
 #include <vector>
+#include <unordered_set>
 
 /**
  * 
@@ -29,6 +30,8 @@ public:
 private:
 	ACPathVolume* Graph;
 	FVector TargetLocation;
+
+
 
 	float EucDistance(CPathNode& Node, FVector TargetWorldLocation) const;
 
