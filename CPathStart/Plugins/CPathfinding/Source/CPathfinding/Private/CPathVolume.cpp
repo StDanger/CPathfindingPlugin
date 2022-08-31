@@ -17,21 +17,21 @@ ACPathVolume::ACPathVolume()
 	RootComponent = VolumeBox;
 }
 
-
-const FVector ACPathVolume::LookupTable_ChildPositionOffsetMaskByIndex[8] =
-{	{-1, -1, -1},
-	{-1, 1, -1},
-	{-1, -1, 1},
-	{-1, 1, 1},
-
-	{1, -1, -1},
-	{1, 1, -1},
-	{1, -1, 1},
-	{1, 1, 1} };
-
-
 void ACPathVolume::DebugPathStartEnd(FVector WorldLocation)
 {
+	
+
+	uint32 LeafID;
+	if (FindLeafByWorldLocation(WorldLocation, LeafID))
+	{
+		DrawDebugBox(GetWorld(), WorldLocationFromTreeID(LeafID), FVector(GetVoxelSizeByDepth(ExtractDepth(LeafID)) / 2.f), FColor::Emerald, false, 5, 10, 2);
+		auto Neighbours = FindAllNeighbourLeafs(LeafID);
+
+		//for (auto N : Neighbours)
+		//{
+		//	DrawDebugBox(GetWorld(), WorldLocationFromTreeID(N), FVector(GetVoxelSizeByDepth(ExtractDepth(N)) / 2.f), FColor::Yellow, false, 5, 10, 2);
+		//}
+	}
 	
 	if (!IsInBounds(WorldLocationToLocalCoordsInt3(WorldLocation)))
 		return;
@@ -42,7 +42,10 @@ void ACPathVolume::DebugPathStartEnd(FVector WorldLocation)
 		CPathAStar AStar;
 
 		auto Path = AStar.FindPath(this, DebugPathStart, WorldLocation);
-		AStar.DrawPath(Path);
+		if (Path.Num() > 1)
+			AStar.DrawPath(Path);
+		else
+			DrawDebugPoint(GetWorld(), WorldLocation, 100, FColor::Red, false, 1);
 		
 	}
 	else
@@ -191,8 +194,8 @@ void ACPathVolume::Tick(float DeltaTime)
 				
 				if(OverlapDatum.OutOverlaps.Num() > 0)
 				{
-					if(DepthsToDraw[Depth])
-						DrawDebugBox(GetWorld(), WorldLocationFromTreeID(OverlapDatum.UserData), FVector(GetVoxelSizeByDepth(Depth) / 2.f), FColor::Red, true, 10);
+					//if(DepthsToDraw[Depth])
+					//	DrawDebugBox(GetWorld(), WorldLocationFromTreeID(OverlapDatum.UserData), FVector(GetVoxelSizeByDepth(Depth) / 2.f), FColor::Red, true, 10);
 				}
 				else
 				{
@@ -522,26 +525,76 @@ CPathOctree* ACPathVolume::FindTreeByWorldLocation(FVector WorldLocation, uint32
 	return &Octrees[TreeID];
 }
 
+CPathOctree* ACPathVolume::FindLeafByWorldLocation(FVector WorldLocation, uint32& TreeID, bool MustBeFree)
+{
+	CPathOctree* CurrentTree = FindTreeByWorldLocation(WorldLocation, TreeID);
+	CPathOctree* FoundLeaf = nullptr;
+	if (CurrentTree)
+	{
+		FVector RelativeLocation = WorldLocation - GetOuterTreeWorldLocation(TreeID);
 
-const FVector ACPathVolume::LookupTable_NeighbourOffsetByDirection[6] =
-{	{0, -1, 0},
-	{-1, 0, 0},
-	{0, 1, 0},
-	{1, 0, 0},
-	{0, 0, -1},
-	{0, 0, 1}};
+		if(CurrentTree->Children)
+			FoundLeaf = FindLeafRecursive(RelativeLocation, TreeID, 0, CurrentTree);
+		FoundLeaf = CurrentTree;
+	}
 
-const int8 ACPathVolume::LookupTable_NeighbourChildIndex[8][6] =
-{	{-2, -5, 1, 4, -3, 2},
-	{0, -6, -1, 5, -4, 3},
-	{-4, -7, 3, 6, 0, -1},
-	{2, -8, -3, 7, 1, -2},
-	{-6, 0, 5, -1, -7, 6},
-	{4, 1, -5, -2, -8, 7},
-	{-8, 2, 7, -3, 4, -5},
-	{6, 3, -7, -4, 5, -6},
-};
+	// Checking if the found leaf is free, and if not returning its free neighbour
+	if (MustBeFree && FoundLeaf && !FoundLeaf->GetIsFree())
+	{
+		CurrentTree = GetParentTree(TreeID);
+		if (CurrentTree)
+		{
+			for (int i = 0; i < 8; i++)
+			{
+				if (CurrentTree->Children[i].GetIsFree())
+					FoundLeaf = &CurrentTree->Children[i];
+			}
+		}
 
+		if(!FoundLeaf->GetIsFree())
+			FoundLeaf = nullptr;
+	}
+
+	return FoundLeaf;
+}
+
+CPathOctree* ACPathVolume::FindLeafRecursive(FVector RelativeLocation, uint32& TreeID, uint32 CurrentDepth, CPathOctree* CurrentTree)
+{
+	CurrentDepth += 1;
+
+	// Determining which child the RelativeLocation is in
+	uint32 ChildIndex = 0;
+	if (RelativeLocation.X > 0.f)
+		ChildIndex += 4;
+	if(RelativeLocation.Z > 0.f)
+		ChildIndex += 2;
+	if (RelativeLocation.Y > 0.f)
+		ChildIndex += 1;
+
+
+	ReplaceChildIndex(TreeID, CurrentDepth, ChildIndex);
+
+	CPathOctree* ChildTree = &CurrentTree->Children[ChildIndex];
+	if (ChildTree->Children)
+	{
+		RelativeLocation = RelativeLocation - (LookupTable_ChildPositionOffsetMaskByIndex[ChildIndex] * (GetVoxelSizeByDepth(CurrentDepth)/2.f));
+		return FindLeafRecursive(RelativeLocation, TreeID, CurrentDepth, ChildTree);
+	}
+	else
+	{
+		ReplaceDepth(TreeID, CurrentDepth);
+		return ChildTree;
+	}
+
+	return nullptr;
+}
+
+FVector ACPathVolume::GetOuterTreeWorldLocation(uint32 TreeID) const
+{
+	FVector LocalCoords = LocalCoordsInt3FromOuterIndex(ExtractOuterIndex(TreeID));
+	LocalCoords *= GetVoxelSizeByDepth(0);
+	return StartPosition + LocalCoords;
+}
 
 CPathOctree* ACPathVolume::FindNeighbourByID(uint32 TreeID, ENeighbourDirection Direction, uint32& NeighbourID)
 {
@@ -597,19 +650,21 @@ CPathOctree* ACPathVolume::FindNeighbourByID(uint32 TreeID, ENeighbourDirection 
 	return nullptr;
 }
 
-std::vector<uint32> ACPathVolume::FindAllFreeNeighbours(uint32 TreeID)
+std::vector<uint32> ACPathVolume::FindAllNeighbourLeafs(uint32 TreeID)
 {
 	std::vector<uint32> FreeNeighbours;
 
 	for (int Direction = 0; Direction < 6; Direction++)
 	{
-		uint32 TempId = 0;
-		CPathOctree* Neighbour = FindNeighbourByID(TreeID, (ENeighbourDirection)Direction, TempId);
+		uint32 NeighbourID = 0;
+		CPathOctree* Neighbour = FindNeighbourByID(TreeID, (ENeighbourDirection)Direction, NeighbourID);
 		if (Neighbour)
 		{
 			if (Neighbour->GetIsFree())
+				FreeNeighbours.push_back(NeighbourID);
+			else if(Neighbour->Children)
 			{
-				FreeNeighbours.push_back(TempId);
+				FindFreeLeafsOnSide(Neighbour, NeighbourID, (ENeighbourDirection)LookupTable_OppositeSide[Direction], &FreeNeighbours);
 			}
 		}
 	}
@@ -617,6 +672,36 @@ std::vector<uint32> ACPathVolume::FindAllFreeNeighbours(uint32 TreeID)
 
 	return FreeNeighbours;
 }
+
+
+void ACPathVolume::FindFreeLeafsOnSide(uint32 TreeID, ENeighbourDirection Side, std::vector<uint32>* Vector)
+{
+	uint32 TempDepthReached;
+	FindFreeLeafsOnSide(FindTreeByID(TreeID, TempDepthReached), TreeID, Side, Vector);
+}
+
+void ACPathVolume::FindFreeLeafsOnSide(CPathOctree* Tree, uint32 TreeID, ENeighbourDirection Side, std::vector<uint32>* Vector)
+{
+#if WITH_EDITOR
+	checkf(Tree->Children, TEXT("CPATH - FindAllLeafsOnSide, requested tree has no children"));
+#endif
+	uint8 NewDepth = ExtractDepth(TreeID) + 1;
+	for (uint8 i = 0; i < 4; i++)
+	{
+		uint8 ChildIndex = LookupTable_ChildrenOnSide[Side][i];
+		CPathOctree* Child = &Tree->Children[ChildIndex];
+		uint32 ChildTreeID = TreeID;
+		ReplaceChildIndexAndDepth(ChildTreeID, NewDepth, ChildIndex);
+		if (Child->Children)
+			FindFreeLeafsOnSide(Child, ChildTreeID, Side, Vector);
+		else
+		{
+			if(Child->GetIsFree())
+				Vector->push_back(ChildTreeID);
+		}
+	}
+}
+
 
 inline CPathOctree* ACPathVolume::GetParentTree(uint32 TreeId)
 {
@@ -629,3 +714,47 @@ inline CPathOctree* ACPathVolume::GetParentTree(uint32 TreeId)
 	return nullptr;
 }
 
+
+
+const FVector ACPathVolume::LookupTable_ChildPositionOffsetMaskByIndex[8] = {
+	{-1, -1, -1},
+	{-1, 1, -1},
+	{-1, -1, 1},
+	{-1, 1, 1},
+
+	{1, -1, -1},
+	{1, 1, -1},
+	{1, -1, 1},
+	{1, 1, 1} };
+
+
+const FVector ACPathVolume::LookupTable_NeighbourOffsetByDirection[6] = {
+	{0, -1, 0},
+	{-1, 0, 0},
+	{0, 1, 0},
+	{1, 0, 0},
+	{0, 0, -1},
+	{0, 0, 1} };
+
+const int8 ACPathVolume::LookupTable_NeighbourChildIndex[8][6] = {
+	{-2, -5, 1, 4, -3, 2},
+	{0, -6, -1, 5, -4, 3},
+	{-4, -7, 3, 6, 0, -1},
+	{2, -8, -3, 7, 1, -2},
+	{-6, 0, 5, -1, -7, 6},
+	{4, 1, -5, -2, -8, 7},
+	{-8, 2, 7, -3, 4, -5},
+	{6, 3, -7, -4, 5, -6},
+};
+
+const int8 ACPathVolume::LookupTable_ChildrenOnSide[6][4] = {
+	{0, 2, 4, 6},
+	{0, 1, 2, 3},
+	{1, 3, 5, 7},
+	{4, 5, 6, 7},
+	{0, 1, 4, 5},
+	{2, 3, 6, 7}
+};
+
+const int8 ACPathVolume::LookupTable_OppositeSide[6] = {
+	2, 3, 0, 1, 5, 4};

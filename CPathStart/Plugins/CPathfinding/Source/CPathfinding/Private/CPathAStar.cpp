@@ -32,11 +32,11 @@ TArray<CPathNode> CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, F
 	std::vector<std::unique_ptr<CPathNode>> ProcessedNodes;
 
 	// Finding start and end node
-	if (!Graph->FindTreeByWorldLocation(Start, TempID))
+	if (!Graph->FindLeafByWorldLocation(Start, TempID))
 		return FoundPath;
 	CPathNode StartNode(TempID);
 
-	if(!Graph->FindTreeByWorldLocation(End, TempID))
+	if(!Graph->FindLeafByWorldLocation(End, TempID))
 		return FoundPath;
 	CPathNode TargetNode(TempID);
 	CalcFitness(TargetNode);
@@ -65,7 +65,7 @@ TArray<CPathNode> CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, F
 			break;
 		}
 		
-		std::vector<uint32> Neighbours = VolumeRef->FindAllFreeNeighbours(CurrentNode.TreeID);
+		std::vector<uint32> Neighbours = VolumeRef->FindAllNeighbourLeafs(CurrentNode.TreeID);
 
 		for (uint32 NewTreeID : Neighbours)
 		{
@@ -129,9 +129,13 @@ float CPathAStar::EucDistance(CPathNode& Node, FVector Target) const
 
 void CPathAStar::CalcFitness(CPathNode& Node)
 {
-	Node.FitnessResult = EucDistance(Node, TargetLocation);
+	
+
 	if (Node.PreviousNode)
 	{
-		Node.FitnessResult += Node.PreviousNode->FitnessResult;
+		Node.DistanceSoFar = Node.PreviousNode->DistanceSoFar + Graph->GetVoxelSizeByDepth(Graph->ExtractDepth(Node.TreeID))/2.f;
 	}
+
+	Node.FitnessResult = EucDistance(Node, TargetLocation) + Node.DistanceSoFar;
+
 }

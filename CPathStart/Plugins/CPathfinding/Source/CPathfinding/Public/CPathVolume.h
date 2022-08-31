@@ -96,6 +96,12 @@ private:
 
 	// Positive values = ChildIndex of the same parent, negative values = (-ChildIndex - 1) of neighbour at Direction [6]
 	static const int8 LookupTable_NeighbourChildIndex[8][6];
+
+	// First index is side as in ENeighbourDirection, and then you get indices of children on that side (in ascending order)
+	static const int8 LookupTable_ChildrenOnSide[6][4];
+
+	// Left returns right, up returns down, Front returns behind, etc
+	static const int8 LookupTable_OppositeSide[6];
 	
 	//Trace handles still waiting for execution
 
@@ -119,14 +125,17 @@ public:
 	// Returns the child with this tree id, or his parent at DepthReached in case the child doesnt exist
 	CPathOctree* FindTreeByID(uint32 TreeID, uint32& DepthReached);
 
-	// Returns a tree and its TreeID by world location, returns null if location outside of volume
+	// Returns a tree and its TreeID by world location, returns null if location outside of volume. Only for Outer index
 	CPathOctree* FindTreeByWorldLocation(FVector WorldLocation, uint32& TreeID);
+
+	// Returns a leaf and its TreeID by world location, returns null if location outside of volume. 
+	CPathOctree* FindLeafByWorldLocation(FVector WorldLocation, uint32& TreeID, bool MustBeFree = 1);
 
 	// Returns a neighbour of the tree with TreeID in given direction, also returns  TreeID if the neighbour if found
 	CPathOctree* FindNeighbourByID(uint32 TreeID, ENeighbourDirection Direction, uint32& NeighbourID);
 
-	// Returns a list of free neighbours as TreeIDs
-	std::vector<uint32> FindAllFreeNeighbours(uint32 TreeID);
+	// Returns a list of free adjecent leafs as TreeIDs
+	std::vector<uint32> FindAllNeighbourLeafs(uint32 TreeID);
 
 	// Returns a parent of tree with given TreeID or null if TreeID has depth of 0
 	inline CPathOctree* GetParentTree(uint32 TreeId);
@@ -180,8 +189,22 @@ private:
 	// Returns the X Y and Z relative to StartPosition and divided by VoxelSize. Multiply them to get the index. NO BOUNDS CHECK
 	inline FVector WorldLocationToLocalCoordsInt3(FVector WorldLocation) const;
 
+	// Returns world location of a tree at depth 0. Extracts only outer index from TreeID
+	inline FVector GetOuterTreeWorldLocation(uint32 TreeID) const;
+
 	// takes in what `WorldLocationToLocalCoordsInt3` returns and performs a bounds check
 	inline bool IsInBounds(FVector LocalCoordsInt3) const;
+
+	// Helper function for 'FindLeafByWorldLocation'. Relative location is location relative to the middle of CurrentTree
+	CPathOctree* FindLeafRecursive(FVector RelativeLocation, uint32& TreeID, uint32 CurrentDepth, CPathOctree* CurrentTree);
+
+	// Returns IDs of all free leafs on chosen side of a tree. Sides are indexed in the same way as neighbours, and adds them to passed Vector.
+	// ASSUMES THAT PASSED TREE HAS CHILDREN
+	void FindFreeLeafsOnSide(uint32 TreeID, ENeighbourDirection Side, std::vector<uint32>* Vector);
+	
+	// Same as the other version, but skips the part of getting a tree by TreeID so its faster
+	void FindFreeLeafsOnSide(CPathOctree* Tree, uint32 TreeID, ENeighbourDirection Side, std::vector<uint32>* Vector);
+
 
 	bool IsInBounds(int OuterIndex) const;
 

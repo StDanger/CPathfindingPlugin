@@ -22,6 +22,7 @@ public:
 
 	// We want to find a node with minimum fitness, this way distance doesnt have to be inverted
 	float FitnessResult = 9999999999.f;
+	float DistanceSoFar = 0;
 
 	// This is valid ONLY during A*, probably a temporary solution
 	CPathNode* PreviousNode = nullptr;
