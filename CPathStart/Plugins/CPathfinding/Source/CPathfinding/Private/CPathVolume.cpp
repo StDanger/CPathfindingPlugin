@@ -8,6 +8,8 @@
 #include "CPathAStar.h" // this is for debugging only, remove later
 
 
+
+
 // Sets default values
 ACPathVolume::ACPathVolume()
 {
@@ -17,7 +19,7 @@ ACPathVolume::ACPathVolume()
 	RootComponent = VolumeBox;
 }
 
-void ACPathVolume::DebugPathStartEnd(FVector WorldLocation)
+void ACPathVolume::DebugDrawNeighbours(FVector WorldLocation)
 {
 	
 
@@ -27,10 +29,10 @@ void ACPathVolume::DebugPathStartEnd(FVector WorldLocation)
 		DrawDebugBox(GetWorld(), WorldLocationFromTreeID(LeafID), FVector(GetVoxelSizeByDepth(ExtractDepth(LeafID)) / 2.f), FColor::Emerald, false, 5, 10, 2);
 		auto Neighbours = FindAllNeighbourLeafs(LeafID);
 
-		//for (auto N : Neighbours)
-		//{
-		//	DrawDebugBox(GetWorld(), WorldLocationFromTreeID(N), FVector(GetVoxelSizeByDepth(ExtractDepth(N)) / 2.f), FColor::Yellow, false, 5, 10, 2);
-		//}
+		for (auto N : Neighbours)
+		{
+			DrawDebugBox(GetWorld(), WorldLocationFromTreeID(N), FVector(GetVoxelSizeByDepth(ExtractDepth(N)) / 2.f), FColor::Yellow, false, 5, 10, 2);
+		}
 	}
 	
 	if (!IsInBounds(WorldLocationToLocalCoordsInt3(WorldLocation)))
@@ -53,6 +55,23 @@ void ACPathVolume::DebugPathStartEnd(FVector WorldLocation)
 		DebugPathStart = WorldLocation;
 		HasDebugPathStarted = true;
 	}
+}
+
+void ACPathVolume::SetDebugPathStart(FVector WorldLocation)
+{
+	DebugPathStart = WorldLocation;
+	HasDebugPathStarted = true;
+}
+
+void ACPathVolume::SetDebugPathEnd(FVector WorldLocation)
+{
+	CPathAStar AStar;
+
+	auto Path = AStar.FindPath(this, DebugPathStart, WorldLocation);
+	if (Path.Num() > 1)
+		AStar.DrawPath(Path);
+	else
+		DrawDebugPoint(GetWorld(), WorldLocation, 100, FColor::Red, false, 0.5);
 }
 
 // Called when the game starts or when spawned

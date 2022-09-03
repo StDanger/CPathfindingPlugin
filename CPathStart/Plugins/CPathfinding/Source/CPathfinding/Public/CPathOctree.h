@@ -54,7 +54,7 @@ public:
 
 	~CPathOctree()
 	{
-		if(this && Children)
-			delete(Children);
+		//if(this && Children)
+		//	delete(Children);
 	};
 };

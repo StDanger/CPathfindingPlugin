@@ -4,6 +4,9 @@
 #include "CPathAStar.h"
 #include "CPathVolume.h"
 #include "DrawDebugHelpers.h"
+#include <queue>
+#include <vector>
+#include <unordered_set>
 #include <memory>
 
 
@@ -49,7 +52,7 @@ TArray<CPathNode> CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, F
 	
 	CPathNode* FoundPathEnd = nullptr;
 
-	while (Pq.size() > 0)
+	while (Pq.size() > 0 && !bStop)
 	{
 		CPathNode CurrentNode = Pq.top();
 		Pq.pop();
@@ -69,6 +72,9 @@ TArray<CPathNode> CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, F
 
 		for (uint32 NewTreeID : Neighbours)
 		{
+			if (bStop)
+				break;
+
 			CPathNode NewNode(NewTreeID);
 			if (!VisitedNodes.count(NewNode))
 			{
@@ -89,7 +95,7 @@ TArray<CPathNode> CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, F
 
 	if (FoundPathEnd)
 	{
-		while (FoundPathEnd)
+		while (FoundPathEnd && !bStop)
 		{
 			
 			FoundPath.Add(*FoundPathEnd);
@@ -110,7 +116,10 @@ TArray<CPathNode> CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, F
 		FoundPath.Add(StartNode);*/
 	}
 	
-	
+	// Pathfinidng has been interrupted due to premature thread kill, so we dont want to return an incomplete path
+	if (bStop)
+		FoundPath.Empty();
+
 	return FoundPath;
 }
 
@@ -118,7 +127,7 @@ void CPathAStar::DrawPath(const TArray<CPathNode>& Path) const
 {
 	for (int i = 0; i < Path.Num()-1; i++)
 	{
-		DrawDebugLine(Graph->GetWorld(), Graph->WorldLocationFromTreeID(Path[i].TreeID), Graph->WorldLocationFromTreeID(Path[i + 1].TreeID), FColor::Magenta, true);
+		DrawDebugLine(Graph->GetWorld(), Graph->WorldLocationFromTreeID(Path[i].TreeID), Graph->WorldLocationFromTreeID(Path[i + 1].TreeID), FColor::Magenta, false, 0.5f, 3, 1.5);
 	}
 }
 

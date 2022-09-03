@@ -4,9 +4,7 @@
 
 #include "CoreMinimal.h"
 #include <CPathNode.h>
-#include <queue>
-#include <vector>
-#include <unordered_set>
+
 
 /**
  * 
@@ -26,16 +24,20 @@ public:
 
 	void DrawPath(const TArray<CPathNode>& Path) const;
 
+	// Set this to true to interrupt pathfinding. FindPath returns an empty array.
+	bool bStop = false;
 
 private:
 	ACPathVolume* Graph;
 	FVector TargetLocation;
 
-
+	
 
 	float EucDistance(CPathNode& Node, FVector TargetWorldLocation) const;
 
 	void CalcFitness(CPathNode& Node);
+
+	
 
 	//std::priority_queue<CPathNode, std::vector<CPathNode>, std::greater<CPathNode>> pq;
 };

@@ -68,7 +68,13 @@ public:
 
 	// Finds and draws a path from first call to 2nd call. Calls outside of volume dont count.
 	UFUNCTION(BlueprintCallable)
-		void DebugPathStartEnd(FVector WorldLocation);
+		void DebugDrawNeighbours(FVector WorldLocation);
+
+	UFUNCTION(BlueprintCallable)
+		void SetDebugPathStart(FVector WorldLocation);
+
+	UFUNCTION(BlueprintCallable)
+		void SetDebugPathEnd(FVector WorldLocation);
 	
 	
 protected:

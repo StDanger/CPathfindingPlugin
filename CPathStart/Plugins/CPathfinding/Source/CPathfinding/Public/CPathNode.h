@@ -7,6 +7,7 @@
 /**
  * 
  */
+
 class CPATHFINDING_API CPathNode
 {
 public:
