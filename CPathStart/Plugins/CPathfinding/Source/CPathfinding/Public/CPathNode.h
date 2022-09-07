@@ -3,16 +3,17 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "CPathNode.generated.h"
 
 /**
  * 
  */
 
-class CPATHFINDING_API CPathNode
+class CPathAStarNode
 {
 public:
-	CPathNode();
-	CPathNode(uint32 ID)
+	CPathAStarNode();
+	CPathAStarNode(uint32 ID)
 		:
 		TreeID(ID)
 	{
@@ -26,32 +27,51 @@ public:
 	float DistanceSoFar = 0;
 
 	// This is valid ONLY during A*, probably a temporary solution
-	CPathNode* PreviousNode = nullptr;
+	CPathAStarNode* PreviousNode = nullptr;
 
+	FVector WorldLocation;
 
 	// ------ Operators for containers ----------------------------------------
-    bool operator <(const CPathNode& Rhs) const
+    bool operator <(const CPathAStarNode& Rhs) const
 	{
         return FitnessResult < Rhs.FitnessResult;
     }
 
-	bool operator >(const CPathNode& Rhs) const
+	bool operator >(const CPathAStarNode& Rhs) const
 	{
 		return FitnessResult > Rhs.FitnessResult;
 	}
 
-	bool operator ==(const CPathNode& Rhs) const
+	bool operator ==(const CPathAStarNode& Rhs) const
 	{
 		return TreeID == Rhs.TreeID;
 	}
 
 	struct Hash
 	{
-		size_t operator()(const CPathNode& Node) const
+		size_t operator()(const CPathAStarNode& Node) const
 		{
 			return Node.TreeID;
 		}
 	};
 
-	~CPathNode();
+	~CPathAStarNode();
+};
+
+USTRUCT(BlueprintType) 
+struct FCPathNode
+{
+	GENERATED_BODY()
+
+	FCPathNode(){}
+	FCPathNode(FVector Location)
+		:
+		WorldLocation(Location)
+	{}
+
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+        FVector WorldLocation;
+
+
 };

@@ -3,10 +3,10 @@
 
 #include "CPathNode.h"
 
-CPathNode::CPathNode()
+CPathAStarNode::CPathAStarNode()
 {
 }
 
-CPathNode::~CPathNode()
+CPathAStarNode::~CPathAStarNode()
 {
 }

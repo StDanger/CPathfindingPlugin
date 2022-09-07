@@ -41,10 +41,10 @@ public:
 	CPathOctree* Children = nullptr;
 
 
-	inline void SetIsFree(bool Free)
+	inline void SetIsFree(bool IsFree)
 	{
 		Data &= 0xFFFFFFFE;
-		Data |= (uint32)Free;
+		Data |= (uint32)IsFree;
 	}
 
 	inline bool GetIsFree() const

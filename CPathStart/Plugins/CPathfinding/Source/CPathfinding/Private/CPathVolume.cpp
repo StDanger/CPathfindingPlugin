@@ -6,6 +6,7 @@
 #include "DrawDebugHelpers.h"
 #include "Components/BoxComponent.h"
 #include "CPathAStar.h" // this is for debugging only, remove later
+#include "GenericPlatform/GenericPlatformAtomics.h"
 
 
 
@@ -17,12 +18,11 @@ ACPathVolume::ACPathVolume()
 	PrimaryActorTick.bCanEverTick = true;
 	VolumeBox = CreateDefaultSubobject<UBoxComponent>("VolumeBox");
 	RootComponent = VolumeBox;
+
 }
 
 void ACPathVolume::DebugDrawNeighbours(FVector WorldLocation)
 {
-	
-
 	uint32 LeafID;
 	if (FindLeafByWorldLocation(WorldLocation, LeafID))
 	{
@@ -33,27 +33,6 @@ void ACPathVolume::DebugDrawNeighbours(FVector WorldLocation)
 		{
 			DrawDebugBox(GetWorld(), WorldLocationFromTreeID(N), FVector(GetVoxelSizeByDepth(ExtractDepth(N)) / 2.f), FColor::Yellow, false, 5, 10, 2);
 		}
-	}
-	
-	if (!IsInBounds(WorldLocationToLocalCoordsInt3(WorldLocation)))
-		return;
-
-	if (HasDebugPathStarted)
-	{
-		HasDebugPathStarted = false;
-		CPathAStar AStar;
-
-		auto Path = AStar.FindPath(this, DebugPathStart, WorldLocation);
-		if (Path.Num() > 1)
-			AStar.DrawPath(Path);
-		else
-			DrawDebugPoint(GetWorld(), WorldLocation, 100, FColor::Red, false, 1);
-		
-	}
-	else
-	{
-		DebugPathStart = WorldLocation;
-		HasDebugPathStarted = true;
 	}
 }
 
@@ -67,8 +46,10 @@ void ACPathVolume::SetDebugPathEnd(FVector WorldLocation)
 {
 	CPathAStar AStar;
 
-	auto Path = AStar.FindPath(this, DebugPathStart, WorldLocation);
-	if (Path.Num() > 1)
+	TArray<CPathAStarNode> Path;
+
+	bool WasFound = AStar.FindPath(this, DebugPathStart, WorldLocation, Path);
+	if (WasFound)
 		AStar.DrawPath(Path);
 	else
 		DrawDebugPoint(GetWorld(), WorldLocation, 100, FColor::Red, false, 0.5);
@@ -96,6 +77,7 @@ void ACPathVolume::BeginPlay()
 	for (int i = 0; i <= OctreeDepth; i++)
 	{
 		VoxelCountAtDepth.Add(0);
+		TraceBoxByDepth.Add(FCollisionShape::MakeBox(FVector(GetVoxelSizeByDepth(i) / 2.f)));
 	}
 
 	while (DepthsToDraw.Num() <= OctreeDepth)
@@ -103,10 +85,10 @@ void ACPathVolume::BeginPlay()
 		DepthsToDraw.Add(0);
 	}
 
-
+	StartPosition = GetActorLocation() - VolumeBox->GetScaledBoxExtent() + GetVoxelSizeByDepth(0) / 2;
 	checkf((uint32)(NodeCount[0] * NodeCount[1] * NodeCount[2]) < DEPTH_0_LIMIT, TEXT("CPATH - Graph Generation:::Depth 0 is too dense, increase OctreeDepth and/or voxel size"));
 	
-
+	Octrees = new CPathOctree[(NodeCount[0] * NodeCount[1] * NodeCount[2])];
 
 	UE_LOG(LogTemp, Warning, TEXT("Count, %d %d %d"), NodeCount[0], NodeCount[1], NodeCount[2] );
 	GenerateGraph();
@@ -116,36 +98,30 @@ void ACPathVolume::BeginPlay()
 void ACPathVolume::GenerateGraph()
 {
 
-	GenerationStart = TIMENOW;
+	
 	PrintGenerationTime = true;
 
-	float CurrVoxelSize = GetVoxelSizeByDepth(0);
+	CurrentGenerators.push_back(new FCPathAsyncVolumeGenerator(this, 0, NodeCount[0] * NodeCount[1] * NodeCount[2]));
+	CurrentGeneratorThreads.push_back(FRunnableThread::Create(CurrentGenerators.back(), TEXT("GENERATOR - Full")));
 
-	StartPosition = GetActorLocation() - VolumeBox->GetScaledBoxExtent() + CurrVoxelSize /2;
+	
 	uint32 Index = 0;
 
 	
 
 	//Reserving memory in array before adding elements
-	Octrees = new CPathOctree[(NodeCount[0] * NodeCount[1] * NodeCount[2])];
-	TraceHandles.Reserve(NodeCount[0] * NodeCount[1] * NodeCount[2]);
-	FCollisionShape TraceBox = FCollisionShape::MakeBox(FVector(CurrVoxelSize / 2));
-
-	delete(TraceHandlesCurr);
-	delete(TraceHandlesNext);
-
-	TraceHandlesCurr = new std::vector<FTraceHandle>;
-	TraceHandlesNext = new std::vector<FTraceHandle>;
 	
 
-	for (uint32 x = 0; x < NodeCount[0]; x++)
+	
+	
+
+	/*for (uint32 x = 0; x < NodeCount[0]; x++)
 	{
 		for (uint32 y = 0; y < NodeCount[1]; y++)
 		{
 			for (uint32 z = 0; z < NodeCount[2]; z++)
 			{
 				FVector Location = FVector(StartPosition + FVector(x, y, z) * CurrVoxelSize);
-				
 				TraceHandlesCurr->push_back(GetWorld()->AsyncOverlapByChannel(
 					Location,
 					FQuat(FRotator::ZeroRotator),
@@ -154,11 +130,13 @@ void ACPathVolume::GenerateGraph()
 					FCollisionQueryParams::DefaultQueryParam,
 					FCollisionResponseParams::DefaultResponseParam,
 					nullptr, CreateTreeID(Index, 0)));
+				RefreshTree(Index);
 				
 				Index++;
 			}
 		}
-	}
+	}*/
+	
 	
 }
 
@@ -167,7 +145,7 @@ void ACPathVolume::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	auto TickStart = TIMENOW;
+	/*auto TickStart = TIMENOW;
 	//uint32 TraceCount = TraceHandles.Num();
 	uint32 TraceCount = TraceHandlesCurr->size();
 	
@@ -256,60 +234,32 @@ void ACPathVolume::Tick(float DeltaTime)
 	std::vector<FTraceHandle>* TempVector = TraceHandlesCurr;
 	TraceHandlesCurr->clear();
 	TraceHandlesCurr = TraceHandlesNext;
-	TraceHandlesNext = TempVector;
+	TraceHandlesNext = TempVector;*/
 }
 
 void ACPathVolume::BeginDestroy()
 {
 	Super::BeginDestroy();
 
-	delete(Octrees);
-}
-
-void ACPathVolume::ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentTreeID, FVector TreeLocation)
-{
-
-	uint32 NewDepth = ExtractDepth(CurrentTreeID) + 1;
-
-	TreeToExpand->Children = new CPathOctree[8];
-
-	float CurrHalfSize = GetVoxelSizeByDepth(NewDepth) / 2.f;
-
-	FCollisionShape TraceBox = FCollisionShape::MakeBox(FVector(CurrHalfSize));
-	FCollisionShape TraceCapsule = FCollisionShape::MakeCapsule(FVector(CurrHalfSize) * 4);
-
-	// Generating children
-	for (uint32 ChildIndex = 0; ChildIndex < 8; ChildIndex++)
+	for (int i = 0; i< CurrentGeneratorThreads.size(); i++)
 	{
-
-		FVector Location = TreeLocation + LookupTable_ChildPositionOffsetMaskByIndex[ChildIndex] * CurrHalfSize;
-
-		//TreeToExpand->Children[ChildIndex].Depth = NewDepth;
-		uint32 TreeID = CurrentTreeID;
-
-		ReplaceDepth(TreeID, NewDepth);
-		AddChildIndex(TreeID, NewDepth, ChildIndex);
-
-
-		TraceHandlesNext->push_back(GetWorld()->AsyncOverlapByChannel(
-			Location,
-			FQuat(FRotator::ZeroRotator),
-			TraceChannel,
-			TraceBox,
-			FCollisionQueryParams::DefaultQueryParam,
-			FCollisionResponseParams::DefaultResponseParam,
-			nullptr, TreeID));
-
-		/*for (int i = 0; i < AdditionalTraces; i++)
+		if (CurrentGeneratorThreads[i])
 		{
-			GetWorld()->OverlapAnyTestByChannel(Location,
-				FQuat(FRotator::ZeroRotator),
-				TraceChannel,
-				TraceCapsule,
-				FCollisionQueryParams::DefaultQueryParam,
-				FCollisionResponseParams::DefaultResponseParam);
-		}*/
+			CurrentGeneratorThreads[i]->Suspend(true);
+			
+			if (CurrentGenerators[i])
+			{
+				CurrentGenerators[i]->bStop = true;
+			}
+			CurrentGeneratorThreads[i]->Suspend(false);
+			CurrentGeneratorThreads[i]->WaitForCompletion();
+			CurrentGeneratorThreads[i]->Kill();
+			delete CurrentGenerators[i];
+		}
 	}
+
+
+	delete[] Octrees;
 }
 
 void ACPathVolume::AfterTracePreprocess()
@@ -399,8 +349,6 @@ inline float ACPathVolume::GetVoxelSizeByDepth(int Depth) const
 {
 	return VoxelSize * FMath::Pow(2, OctreeDepth - Depth);
 }
-
-
 
 inline uint32 ACPathVolume::CreateTreeID(uint32 Index, uint32 Depth) const
 {

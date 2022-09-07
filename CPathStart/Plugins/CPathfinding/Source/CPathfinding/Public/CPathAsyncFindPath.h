@@ -11,11 +11,11 @@
 
 
 /**
- * 
+ Accessing this class through ANY MEANS other than delegates is UNSAFE.
  */
 
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FResponseDelegate, float, TestFloat);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FResponseDelegate, const TArray<FCPathNode>&, Path, bool, TestBool);
 
 
 UCLASS()
@@ -40,6 +40,7 @@ public:
 	class ACPathVolume* VolumeRef;
 
 	FVector PathStart, PathEnd;
+	TArray<FCPathNode> UserPath;
 
 private:
 
@@ -66,5 +67,5 @@ public:
 	class CPathAStar* AStar = nullptr;
 private:
 	
-	class UCPathAsyncFindPath* AsyncNodeRef = nullptr;
+	class UCPathAsyncFindPath* AsyncActionRef = nullptr;
 };

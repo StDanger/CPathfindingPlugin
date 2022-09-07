@@ -8,7 +8,10 @@
 #include <memory>
 #include <chrono>
 #include <vector>
+#include <atomic>
+#include <set>
 #include "CPathOctree.h"
+#include "CPathAsyncVolumeGeneration.h"
 #include "CPathVolume.generated.h"
 
 
@@ -23,10 +26,17 @@ UCLASS()
 class ACPathVolume : public AActor
 {
 	GENERATED_BODY()
-	
+
+		friend class FCPathAsyncVolumeGenerator;
 public:	
-	// Sets default values for this actor's properties
 	ACPathVolume();
+
+	virtual void Tick(float DeltaTime) override;
+
+	virtual void BeginDestroy() override;
+
+
+	// -------- BP EXPOSED ----------
 
 	//Box to mark the area to generate graph in. It should not be rotated, the rotation will be ignored.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
@@ -38,16 +48,16 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
 		float AgentRadius = 20;
 
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
 		float AdditionalTraces = 0;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
 		float AgentHeight = 150;
-	
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
-		bool DrawConnections = true;
+	// How many timer per second do parts of the volume get regenerated based on dynamic obstacles, in sconds
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
+		float DynamicUpdateRate = 3;
+
 
 	//Size of the smallest voxel size, default: AgentRadius*2
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
@@ -62,41 +72,45 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
 		TArray<bool> DepthsToDraw;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
+		bool DrawFree = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
+		bool DrawOccupied = false;
+
 	// This is a read only info about generated graph
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = CPathGeneratedInfo)
 		TArray<int> VoxelCountAtDepth;
 
 	// Finds and draws a path from first call to 2nd call. Calls outside of volume dont count.
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = CPathDebug)
 		void DebugDrawNeighbours(FVector WorldLocation);
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = CPathDebug)
 		void SetDebugPathStart(FVector WorldLocation);
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = CPathDebug)
 		void SetDebugPathEnd(FVector WorldLocation);
-	
+
+
+
 	
 protected:
-	// Called when the game starts or when spawned
+	
 	virtual void BeginPlay() override;
 
 	void GenerateGraph();
 
-public:	
-	// Called every frame
-	virtual void Tick(float DeltaTime) override;
-
 	CPathOctree* Octrees = nullptr;
 
-	virtual void BeginDestroy() override;
-	
-private:
-
+protected:
 	//position of the first voxel
 	FVector StartPosition;
 
-	// Lookup tables
+	//Dimension sizes of the Nodes array, XYZ 
+	uint32 NodeCount[3];
+
+	// ----- Lookup tables-------
 	static const FVector LookupTable_ChildPositionOffsetMaskByIndex[8];
 	static const FVector LookupTable_NeighbourOffsetByDirection[6];
 
@@ -108,22 +122,9 @@ private:
 
 	// Left returns right, up returns down, Front returns behind, etc
 	static const int8 LookupTable_OppositeSide[6];
-	
-	//Trace handles still waiting for execution
 
-	TArray<FTraceHandle> TraceHandles;
-	std::vector<FTraceHandle>* TraceHandlesCurr;
-	std::vector<FTraceHandle>* TraceHandlesNext;
-	
-	//Dimension sizes of the Nodes array, XYZ 
-	uint32 NodeCount[3];
-
-	void ExpandOctree(CPathOctree* TreeToExpand, uint32 CurrentTreeID, FVector TreeLocation);
-
-	void AfterTracePreprocess();
-
-	void UpdateNeighbours(CPathOctree* Tree, uint32 TreeID);
-
+	// This is to avoid initializing a new box every subtree generation
+	TArray<FCollisionShape> TraceBoxByDepth;
 	
 public:
 	//----------- TreeID ------------------------------------------------------------------------
@@ -175,9 +176,15 @@ public:
 	// Replaces child index at given depth and also replaces depth to the same one
 	inline void ReplaceChildIndexAndDepth(uint32& TreeID, uint32 Depth, uint32 ChildIndex);
 
-	
+	// Dynamic obstacles, these are consumed in the graph generation thread
+	TQueue<AActor*, EQueueMode::Mpsc> DynamicObstaclesToAdd;
+	TQueue<AActor*, EQueueMode::Mpsc> DynamicObstaclesToRemove;
 
+	// This is false during graph generation. When it's false, octree data might be corrupted
+	std::atomic_bool SafeToAccess = true;
 
+	// Graph wont start generating as long as this is not 0
+	std::atomic_int PathfindersRunning = 0;
 
 
 	// ----------- Other helper functions ---------------------
@@ -185,6 +192,16 @@ public:
 	inline float GetVoxelSizeByDepth(int Depth) const;
 
 private:
+
+	void AfterTracePreprocess();
+
+	void UpdateNeighbours(CPathOctree* Tree, uint32 TreeID);
+
+	// Dymanic obstacles
+	std::set<int32> TreesToRegenerate;
+	std::set<AActor*> TrackedDynamicObstacles;
+
+	
 
 	// Returns an index in the Octree array from world position. NO BOUNDS CHECK
 	inline int WorldLocationToIndex(FVector WorldLocation) const;
@@ -211,9 +228,17 @@ private:
 	// Same as the other version, but skips the part of getting a tree by TreeID so its faster
 	void FindFreeLeafsOnSide(CPathOctree* Tree, uint32 TreeID, ENeighbourDirection Side, std::vector<uint32>* Vector);
 
-
 	bool IsInBounds(int OuterIndex) const;
 
+
+// -------- GENERATION -----
+	std::vector<FRunnableThread*> CurrentGeneratorThreads;
+	std::vector<FCPathAsyncVolumeGenerator*> CurrentGenerators;
+
+	void CleanFinishedGenerators();
+
+
+// -------- DEBUGGING -----
 	FVector DebugPathStart;
 	bool HasDebugPathStarted = false;
 

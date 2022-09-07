@@ -1,8 +1,9 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
+#include "CPathAsyncFindPath.h"
 #include "CPathAStar.h"
 #include "CPathVolume.h"
-#include "CPathAsyncFindPath.h"
+#include <thread>
 
 UCPathAsyncFindPath* UCPathAsyncFindPath::FindPathAsync(ACPathVolume* Volume, FVector StartLocation, FVector EndLocation)
 {
@@ -19,7 +20,7 @@ void UCPathAsyncFindPath::Activate()
 {
     if (!VolumeRef)
     {
-        Failure.Broadcast(-1.f);
+        Failure.Broadcast(UserPath, false);
         RemoveFromRoot();
     }
     else
@@ -52,35 +53,44 @@ void UCPathAsyncFindPath::BeginDestroy()
 
 FCPathRunnableFindPath::FCPathRunnableFindPath(UCPathAsyncFindPath* AsyncNode)
 {
-    AsyncNodeRef = AsyncNode;
+    AsyncActionRef = AsyncNode;
 }
 
 bool FCPathRunnableFindPath::Init()
 {
     AStar = new CPathAStar();
-
     return true;
 }
 
 uint32 FCPathRunnableFindPath::Run()
 {
-    auto FoundPath = AStar->FindPath(AsyncNodeRef->VolumeRef, AsyncNodeRef->PathStart, AsyncNodeRef->PathEnd);
+    // waiting for the volume to finish generating
+    while(!AsyncActionRef->VolumeRef->SafeToAccess.load())
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    
+    // Preventing further generation while we search for a path
+    AsyncActionRef->VolumeRef->PathfindersRunning++;
 
-    if (FoundPath.Num() > 0)
+    TArray<CPathAStarNode> TempArray;
+    auto FoundPath = AStar->FindPath(AsyncActionRef->VolumeRef, AsyncActionRef->PathStart, AsyncActionRef->PathEnd, TempArray);
+
+    if (FoundPath)
     {
         //AStar->DrawPath(FoundPath);
-        AsyncNodeRef->Success.Broadcast(1.f);
-        
+        AStar->TransformToUserPath(AsyncActionRef->VolumeRef, TempArray, AsyncActionRef->UserPath);
+        AsyncActionRef->Success.Broadcast(AsyncActionRef->UserPath, true);
     }
     else
     {
-        AsyncNodeRef->Failure.Broadcast(-1.f);
+        AsyncActionRef->Failure.Broadcast(AsyncActionRef->UserPath, false);
     }
-    AsyncNodeRef->RemoveFromRoot();
+    AsyncActionRef->RemoveFromRoot();
     return 0;
 }
 
 void FCPathRunnableFindPath::Stop()
 {
+    // Decreasing the atomic running pathfinders value to enable generation
+    AsyncActionRef->VolumeRef->PathfindersRunning--;
     delete AStar;
 }
