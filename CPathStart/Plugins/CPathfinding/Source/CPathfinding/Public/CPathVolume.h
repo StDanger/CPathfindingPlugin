@@ -10,6 +10,7 @@
 #include <vector>
 #include <atomic>
 #include <set>
+#include <list>
 #include "CPathOctree.h"
 #include "CPathAsyncVolumeGeneration.h"
 #include "CPathVolume.generated.h"
@@ -54,9 +55,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
 		float AgentHeight = 150;
 
-	// How many timer per second do parts of the volume get regenerated based on dynamic obstacles, in sconds
+	// How many timer per second do parts of the volume get regenerated based on dynamic obstacles, in seconds
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
-		float DynamicUpdateRate = 3;
+		float DynamicObstaclesUpdateRate = 3;
 
 
 	//Size of the smallest voxel size, default: AgentRadius*2
@@ -176,32 +177,30 @@ public:
 	// Replaces child index at given depth and also replaces depth to the same one
 	inline void ReplaceChildIndexAndDepth(uint32& TreeID, uint32 Depth, uint32 ChildIndex);
 
-	// Dynamic obstacles, these are consumed in the graph generation thread
-	TQueue<AActor*, EQueueMode::Mpsc> DynamicObstaclesToAdd;
-	TQueue<AActor*, EQueueMode::Mpsc> DynamicObstaclesToRemove;
+	// Traverses the tree downwards and adds every tree to the container
+	void GetAllSubtrees(uint32 TreeID, std::vector<uint32>& Container);
 
-	// This is false during graph generation. When it's false, octree data might be corrupted
-	std::atomic_bool SafeToAccess = true;
+	// Volume is not safe to access as long as this is not 0, pathfinders should wait till this is 0
+	std::atomic_int GeneratorsRunning = 0;
 
-	// Graph wont start generating as long as this is not 0
+	// Volume wont start generating as long as this is not 0
 	std::atomic_int PathfindersRunning = 0;
 
+	std::set<AActor*> TrackedDynamicObstacles;
 
 	// ----------- Other helper functions ---------------------
 
 	inline float GetVoxelSizeByDepth(int Depth) const;
+
+	// Draws the tree, this takes all the drawing options into condition. If Duraiton is left 0, it never disappears. 
+	//  If Color = green, free trees are green and occupied are red.
+	void DrawDebugVoxel(uint32 TreeID, bool DrawIfNotLeaf = true, float Duration = 0, FColor Color = FColor::Green);
 
 private:
 
 	void AfterTracePreprocess();
 
 	void UpdateNeighbours(CPathOctree* Tree, uint32 TreeID);
-
-	// Dymanic obstacles
-	std::set<int32> TreesToRegenerate;
-	std::set<AActor*> TrackedDynamicObstacles;
-
-	
 
 	// Returns an index in the Octree array from world position. NO BOUNDS CHECK
 	inline int WorldLocationToIndex(FVector WorldLocation) const;
@@ -228,14 +227,25 @@ private:
 	// Same as the other version, but skips the part of getting a tree by TreeID so its faster
 	void FindFreeLeafsOnSide(CPathOctree* Tree, uint32 TreeID, ENeighbourDirection Side, std::vector<uint32>* Vector);
 
-	bool IsInBounds(int OuterIndex) const;
+	void GetAllSubtreesRec(uint32 TreeID, CPathOctree* Tree, std::vector<uint32>& Container, uint32 Depth);
 
 
 // -------- GENERATION -----
-	std::vector<FRunnableThread*> CurrentGeneratorThreads;
-	std::vector<FCPathAsyncVolumeGenerator*> CurrentGenerators;
+	FTimerHandle GenerationTimerHandle;
+
+	std::list<std::unique_ptr<FCPathAsyncVolumeGenerator>> GeneratorThreads;
 
 	void CleanFinishedGenerators();
+	void GenerationUpdate();
+
+	std::set<int32> TreesToRegenerate;
+	// This is so that when an actor moves, the previous space it was in needs to be regenerated as well
+	std::set<int32> TreesToRegeneratePreviousUpdate;
+
+	
+	
+
+
 
 
 // -------- DEBUGGING -----

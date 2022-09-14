@@ -10,12 +10,12 @@
 
 enum ENeighbourDirection
 {
-	Left,
-	Front,
-	Right,
-	Behind,
-	Below,
-	Above
+	Left,	// -Y
+	Front,	// -X
+	Right,	// +Y
+	Behind, // +X
+	Below,	// -Z
+	Above	// +Z
 };
 
 
@@ -53,8 +53,7 @@ public:
 	}
 
 	~CPathOctree()
-	{
-		//if(this && Children)
-		//	delete(Children);
+	{		
+		delete[] Children;
 	};
 };

@@ -62,10 +62,13 @@ public:
 
 	virtual void Stop();
 
+	virtual void Exit();
+
 	//bool StopThread = false;
 
 	class CPathAStar* AStar = nullptr;
 private:
-	
+	bool bIncreasedPathfRunning = false;
+
 	class UCPathAsyncFindPath* AsyncActionRef = nullptr;
 };

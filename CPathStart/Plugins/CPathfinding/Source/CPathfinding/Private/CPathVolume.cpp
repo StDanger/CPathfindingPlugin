@@ -31,9 +31,42 @@ void ACPathVolume::DebugDrawNeighbours(FVector WorldLocation)
 
 		for (auto N : Neighbours)
 		{
-			DrawDebugBox(GetWorld(), WorldLocationFromTreeID(N), FVector(GetVoxelSizeByDepth(ExtractDepth(N)) / 2.f), FColor::Yellow, false, 5, 10, 2);
+			DrawDebugBox(GetWorld(), WorldLocationFromTreeID(N), FVector(GetVoxelSizeByDepth(ExtractDepth(N)) / 2.f), FColor::Yellow, false, 5, 0U, 2);
 		}
 	}
+}
+
+void ACPathVolume::DrawDebugVoxel(uint32 TreeID, bool DrawIfNotLeaf, float Duration, FColor Color)
+{
+
+	uint32 Depth;
+	auto Tree = FindTreeByID(TreeID, Depth);
+	if (Tree->Children && !DrawIfNotLeaf)
+		return;
+	int IsFree = Tree->GetIsFree();
+	if (IsFree)
+	{
+		if (!DrawFree)
+			return;
+	}
+	else
+	{
+		if (!DrawOccupied)
+			return;
+		if (Color == FColor::Green)
+		{
+			Color = FColor::Red;
+		}
+	}
+		
+	
+	bool Persistent = false;
+	if (Duration < 0)
+		Persistent = true;
+	
+	if(DepthsToDraw[Depth])
+		DrawDebugBox(GetWorld(), WorldLocationFromTreeID(TreeID), FVector(GetVoxelSizeByDepth(ExtractDepth(TreeID)) / 2.f), Color, Persistent, Duration, 0U, 1);
+		
 }
 
 void ACPathVolume::SetDebugPathStart(FVector WorldLocation)
@@ -60,7 +93,7 @@ void ACPathVolume::BeginPlay()
 {
 	Super::BeginPlay();
 	UBoxComponent* tempBox = Cast<UBoxComponent>(GetRootComponent());
-
+	tempBox->UpdateOverlaps();
 
 	/*NodeCount[0] = VolumeBox->GetScaledBoxExtent().X * 2 / VoxelSize + 1;
 	NodeCount[1] = VolumeBox->GetScaledBoxExtent().Y*2 / VoxelSize + 1;
@@ -100,44 +133,33 @@ void ACPathVolume::GenerateGraph()
 
 	
 	PrintGenerationTime = true;
+	uint32 OuterNodeCount = NodeCount[0] * NodeCount[1] * NodeCount[2];
 
-	CurrentGenerators.push_back(new FCPathAsyncVolumeGenerator(this, 0, NodeCount[0] * NodeCount[1] * NodeCount[2]));
-	CurrentGeneratorThreads.push_back(FRunnableThread::Create(CurrentGenerators.back(), TEXT("GENERATOR - Full")));
+	// If we use all logical threads in the system, the rest of the game
+	// will have no computing power to work with. From my small test sample
+	// I have found this formula to be the optimal solution. 
+	uint32 ThreadCount;
+	/*if (FPlatformMisc::NumberOfCoresIncludingHyperthreads() > FPlatformMisc::NumberOfCores())
+		ThreadCount = FPlatformMisc::NumberOfCores() + (FPlatformMisc::NumberOfCoresIncludingHyperthreads() - FPlatformMisc::NumberOfCores()) / 3;
+	else
+		ThreadCount = FPlatformMisc::NumberOfCores() - 1;*/
+	ThreadCount = FPlatformMisc::NumberOfCores();
 
-	
-	uint32 Index = 0;
+	UE_LOG(LogTemp, Warning, TEXT("Outer node count, %d core count %d SizeOf Octree %d"), OuterNodeCount, ThreadCount, sizeof(CPathOctree));
+	uint32 NodesPerThread = OuterNodeCount / ThreadCount;
 
-	
-
-	//Reserving memory in array before adding elements
-	
-
-	
-	
-
-	/*for (uint32 x = 0; x < NodeCount[0]; x++)
+	for (uint32 CurrentThread = 0; CurrentThread < ThreadCount; CurrentThread++)
 	{
-		for (uint32 y = 0; y < NodeCount[1]; y++)
-		{
-			for (uint32 z = 0; z < NodeCount[2]; z++)
-			{
-				FVector Location = FVector(StartPosition + FVector(x, y, z) * CurrVoxelSize);
-				TraceHandlesCurr->push_back(GetWorld()->AsyncOverlapByChannel(
-					Location,
-					FQuat(FRotator::ZeroRotator),
-					TraceChannel,
-					TraceBox,
-					FCollisionQueryParams::DefaultQueryParam,
-					FCollisionResponseParams::DefaultResponseParam,
-					nullptr, CreateTreeID(Index, 0)));
-				RefreshTree(Index);
+		uint32 LastIndex = NodesPerThread * (CurrentThread + 1);
+		if (CurrentThread == ThreadCount - 1)
+			LastIndex += OuterNodeCount % ThreadCount;
+		
+		GeneratorThreads.push_back(std::make_unique<FCPathAsyncVolumeGenerator>(this, NodesPerThread * CurrentThread, LastIndex));
+		GeneratorThreads.back()->ThreadRef = FRunnableThread::Create(GeneratorThreads.back().get(), TEXT("GENERATOR - Full"));
 				
-				Index++;
-			}
-		}
-	}*/
+	}
 	
-	
+	GetWorld()->GetTimerManager().SetTimer(GenerationTimerHandle, this, &ACPathVolume::GenerationUpdate, 1.f/DynamicObstaclesUpdateRate, true);
 }
 
 
@@ -241,24 +263,7 @@ void ACPathVolume::BeginDestroy()
 {
 	Super::BeginDestroy();
 
-	for (int i = 0; i< CurrentGeneratorThreads.size(); i++)
-	{
-		if (CurrentGeneratorThreads[i])
-		{
-			CurrentGeneratorThreads[i]->Suspend(true);
-			
-			if (CurrentGenerators[i])
-			{
-				CurrentGenerators[i]->bStop = true;
-			}
-			CurrentGeneratorThreads[i]->Suspend(false);
-			CurrentGeneratorThreads[i]->WaitForCompletion();
-			CurrentGeneratorThreads[i]->Kill();
-			delete CurrentGenerators[i];
-		}
-	}
-
-
+	GeneratorThreads.clear();
 	delete[] Octrees;
 }
 
@@ -329,15 +334,6 @@ inline bool ACPathVolume::IsInBounds(FVector XYZ) const
 		return false;
 
 	return true;
-}
-
-bool ACPathVolume::IsInBounds(int OuterIndex) const
-{	
-#if WITH_EDITOR
-		checkf(OuterIndex < (VoxelCountAtDepth[0]<<1), TEXT("CPATH - Graph Generation:::IsInBounds - Outer index was not extracted"));
-#endif
-
-	return OuterIndex < VoxelCountAtDepth[0] && OuterIndex >= 0;
 }
 
 float ACPathVolume::LocalCoordsInt3ToIndex(FVector V) const
@@ -461,6 +457,27 @@ inline void ACPathVolume::ReplaceChildIndexAndDepth(uint32& TreeID, uint32 Depth
 	ReplaceDepth(TreeID, Depth);
 }
 
+void ACPathVolume::GetAllSubtrees(uint32 TreeID, std::vector<uint32>& Container)
+{
+	uint32 Depth = 0;	
+	CPathOctree* Tree = FindTreeByID(TreeID, Depth);
+	GetAllSubtreesRec(TreeID, Tree, Container, Depth);
+}
+
+void ACPathVolume::GetAllSubtreesRec(uint32 TreeID, CPathOctree* Tree, std::vector<uint32>& Container, uint32 Depth)
+{	
+	if (Tree->Children)
+	{
+		Depth++;
+		for (uint32 ChildID = 0; ChildID < 8; ChildID++)
+		{
+			uint32 ID = TreeID;
+			ReplaceChildIndexAndDepth(ID, Depth, ChildID);
+			GetAllSubtreesRec(ID, &Tree->Children[ChildID], Container, Depth);
+			Container.push_back(ID);
+		}
+	}
+}
 
 CPathOctree* ACPathVolume::FindTreeByID(uint32 TreeID, uint32& DepthReached)
 {
@@ -682,6 +699,80 @@ inline CPathOctree* ACPathVolume::GetParentTree(uint32 TreeId)
 }
 
 
+void ACPathVolume::CleanFinishedGenerators()
+{
+	for (auto Generator = GeneratorThreads.begin(); Generator != GeneratorThreads.end(); Generator++)
+	{
+		if (!(*Generator)->ThreadRef)
+		{
+			Generator = GeneratorThreads.erase(Generator);
+		}
+	}
+
+}
+
+void ACPathVolume::GenerationUpdate()
+{
+#if WITH_EDITOR
+	checkf(GeneratorsRunning.load() >= 0, TEXT("CPATH - Graph Generation:::GenerationUpdate - GeneratorsRunning was negative!!!!!"));
+#endif
+	// Garbage collecting generators that finished their job
+	CleanFinishedGenerators();
+	//UE_LOG(LogTemp, Warning, TEXT("generators running %d, Generator list size %d, Pathfinders running %d"), GeneratorsRunning.load(), GeneratorThreads.size(), PathfindersRunning.load());
+	
+
+	// We skip this update if generation from previous update is still running
+	// This can be the cause if we set DynamicObstaclesUpdateRate too high, or when it's initial generation, 
+	// or if there were a lot of pathfinding requests and generators are waiting for them to finish.
+	if (GeneratorsRunning.load() == 0 && TrackedDynamicObstacles.size())
+	{
+
+		//Drawing previously updated trees
+		for (auto TreeID : TreesToRegenerate)
+		{
+			std::vector<uint32> Subtrees;
+			Subtrees.push_back(TreeID);
+			GetAllSubtrees(TreeID, Subtrees);
+			for (auto SubID : Subtrees)
+			{
+				DrawDebugVoxel(SubID, false, 1.f / DynamicObstaclesUpdateRate);
+			}
+		}
+
+		// Adding indexes from previous update
+		TreesToRegenerate = TreesToRegeneratePreviousUpdate;
+		TreesToRegeneratePreviousUpdate.clear();
+
+		// Addine new indexes
+		for (auto Obstacle : TrackedDynamicObstacles)
+		{
+			FCPathAsyncVolumeGenerator::GetIndexesToUpdateFromActor(Obstacle, this);
+		}
+		if (TreesToRegenerate.size())
+		{
+			// In case there is a lot of trees to update, we split the work into multiple threads to make it faster
+			uint32 ThreadCount = FMath::Min(FPlatformMisc::NumberOfCores(), (int)TreesToRegenerate.size() / 200);
+			ThreadCount = FMath::Max(ThreadCount, (uint32)1);
+			uint32 NodesPerThread = (uint32)TreesToRegenerate.size() / ThreadCount;
+
+			// Starting generation
+			for (uint32 CurrentThread = 0; CurrentThread < ThreadCount; CurrentThread++)
+			{
+				uint32 LastIndex = NodesPerThread * (CurrentThread + 1);
+				if (CurrentThread == ThreadCount - 1)
+					LastIndex += TreesToRegenerate.size() % ThreadCount;
+
+				GeneratorThreads.push_back(std::make_unique<FCPathAsyncVolumeGenerator>(this, NodesPerThread * CurrentThread, LastIndex, true));
+				GeneratorThreads.back()->ThreadRef = FRunnableThread::Create(GeneratorThreads.back().get(), TEXT("GENERATOR - Obstacles"));
+
+			}
+			UE_LOG(LogTemp, Warning, TEXT("GENERATION UPDATE Tracked - %d, Indexes - %d, Threads - %d"), TrackedDynamicObstacles.size(), TreesToRegenerate.size(), ThreadCount);
+		}
+	}
+}
+
+
+
 
 const FVector ACPathVolume::LookupTable_ChildPositionOffsetMaskByIndex[8] = {
 	{-1, -1, -1},
@@ -692,7 +783,8 @@ const FVector ACPathVolume::LookupTable_ChildPositionOffsetMaskByIndex[8] = {
 	{1, -1, -1},
 	{1, 1, -1},
 	{1, -1, 1},
-	{1, 1, 1} };
+	{1, 1, 1}
+};
 
 
 const FVector ACPathVolume::LookupTable_NeighbourOffsetByDirection[6] = {

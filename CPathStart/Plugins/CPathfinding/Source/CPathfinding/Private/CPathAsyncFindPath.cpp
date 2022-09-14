@@ -64,11 +64,12 @@ bool FCPathRunnableFindPath::Init()
 
 uint32 FCPathRunnableFindPath::Run()
 {
-    // waiting for the volume to finish generating
-    while(!AsyncActionRef->VolumeRef->SafeToAccess.load())
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Waiting for the volume to finish generating
+    while(AsyncActionRef->VolumeRef->GeneratorsRunning.load() > 0 && !AStar->bStop)
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
     
     // Preventing further generation while we search for a path
+    bIncreasedPathfRunning = true;
     AsyncActionRef->VolumeRef->PathfindersRunning++;
 
     TArray<CPathAStarNode> TempArray;
@@ -85,12 +86,26 @@ uint32 FCPathRunnableFindPath::Run()
         AsyncActionRef->Failure.Broadcast(AsyncActionRef->UserPath, false);
     }
     AsyncActionRef->RemoveFromRoot();
+
+    if (bIncreasedPathfRunning)
+        AsyncActionRef->VolumeRef->PathfindersRunning--;
+    bIncreasedPathfRunning = false;
     return 0;
 }
 
 void FCPathRunnableFindPath::Stop()
 {
-    // Decreasing the atomic running pathfinders value to enable generation
-    AsyncActionRef->VolumeRef->PathfindersRunning--;
+    // Preventing a potential deadlock if the process is killed without waiting
+    if(bIncreasedPathfRunning)
+        AsyncActionRef->VolumeRef->PathfindersRunning--;
+    bIncreasedPathfRunning = false;
+
     delete AStar;
+    UE_LOG(LogTemp, Warning, TEXT("pathfinder stopped"));
+}
+
+void FCPathRunnableFindPath::Exit()
+{
+    delete AStar;
+    UE_LOG(LogTemp, Warning, TEXT("pathfinder exit"));
 }

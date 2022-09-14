@@ -11,9 +11,34 @@ UCPathDynamicObstacle::UCPathDynamicObstacle()
 	// off to improve performance if you don't need them.
 	PrimaryComponentTick.bCanEverTick = false;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
+	bAutoActivate = false;
 	// ...
 }
 
+
+void UCPathDynamicObstacle::Activate(bool bReset)
+{
+
+	Super::Activate();
+	
+		TSubclassOf<ACPathVolume> Filter = ACPathVolume::StaticClass();
+		GetOwner()->GetOverlappingActors(OverlappigVolumes, ACPathVolume::StaticClass());
+		for (AActor* Volume : OverlappigVolumes)
+		{
+			Cast<ACPathVolume>(Volume)->TrackedDynamicObstacles.insert(GetOwner());
+		}
+	
+}
+
+void UCPathDynamicObstacle::Deactivate()
+{
+	Super::Deactivate();
+	for (AActor* Volume : OverlappigVolumes)
+	{
+		Cast<ACPathVolume>(Volume)->TrackedDynamicObstacles.erase(GetOwner());
+	}
+	OverlappigVolumes.Empty();
+}
 
 // Called when the game starts
 void UCPathDynamicObstacle::BeginPlay()
@@ -21,7 +46,11 @@ void UCPathDynamicObstacle::BeginPlay()
 	Super::BeginPlay();
 	GetOwner()->OnActorBeginOverlap.AddDynamic(this, &UCPathDynamicObstacle::OnBeginOverlap);
 	GetOwner()->OnActorEndOverlap.AddDynamic(this, &UCPathDynamicObstacle::OnBeginOverlap);
-	GetOwner()->UpdateOverlaps(true);
+	if (ActivateOnBeginPlay)
+	{
+		Activate();
+	}
+
 	// ...
 	
 }
@@ -30,21 +59,30 @@ void UCPathDynamicObstacle::BeginPlay()
 
 void UCPathDynamicObstacle::OnBeginOverlap(AActor* Owner, AActor* OtherActor)
 {
-	UE_LOG(LogTemp, Warning, TEXT("This actor: %s   Other actor: %s"), *Owner->GetName(), *OtherActor->GetName());
-
-	ACPathVolume* Volume = Cast<ACPathVolume>(OtherActor);
-	if (Volume)
+	if (IsActive())
 	{
-		Volume->DynamicObstaclesToAdd.Enqueue(GetOwner());
+		UE_LOG(LogTemp, Warning, TEXT("BEGIN OVERLAP - This actor: %s   Other actor: %s"), *Owner->GetName(), *OtherActor->GetName());
+
+		ACPathVolume* Volume = Cast<ACPathVolume>(OtherActor);
+		if (Volume)
+		{
+			Volume->TrackedDynamicObstacles.insert(GetOwner());
+			OverlappigVolumes.Add(Volume);
+		}
 	}
 }
 
 void UCPathDynamicObstacle::OnEndOverlap(AActor* Owner, AActor* OtherActor)
 {
-	ACPathVolume* Volume = Cast<ACPathVolume>(OtherActor);
-	if (Volume)
+	if (IsActive())
 	{
-		Volume->DynamicObstaclesToRemove.Enqueue(GetOwner());
+		UE_LOG(LogTemp, Warning, TEXT("END OVERLAP - This actor: %s   Other actor: %s"), *Owner->GetName(), *OtherActor->GetName());
+		ACPathVolume* Volume = Cast<ACPathVolume>(OtherActor);
+		if (Volume)
+		{
+			Volume->TrackedDynamicObstacles.erase(GetOwner());
+			OverlappigVolumes.Remove(Volume);
+		}
 	}
 }
 
