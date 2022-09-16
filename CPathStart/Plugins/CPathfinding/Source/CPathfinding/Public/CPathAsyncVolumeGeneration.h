@@ -48,7 +48,6 @@ protected:
 	bool RefreshTreeRec(CPathOctree* OctreeRef, uint32 Depth, FVector TreeLocation);
 
 
-public: // ------------- STATIC GENERATION FUNCTIONS (called in CPathVolume) --------------
-	static void GetIndexesToUpdateFromActor(AActor* Actor, ACPathVolume* Volume);
+public: 
 
 };

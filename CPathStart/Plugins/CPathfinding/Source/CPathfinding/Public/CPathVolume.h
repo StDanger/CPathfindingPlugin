@@ -16,7 +16,7 @@
 #include "CPathVolume.generated.h"
 
 
-// This limit can be up to 2^16, but 2^15 should be MORE than enough
+// This limit can be up to 2^16
 #define DEPTH_0_LIMIT (uint32)1<<16 
 
 #define TIMENOW std::chrono::steady_clock::now()
@@ -28,7 +28,8 @@ class ACPathVolume : public AActor
 {
 	GENERATED_BODY()
 
-		friend class FCPathAsyncVolumeGenerator;
+	friend class FCPathAsyncVolumeGenerator;
+	friend class UCPathDynamicObstacle;
 public:	
 	ACPathVolume();
 
@@ -40,44 +41,49 @@ public:
 	// -------- BP EXPOSED ----------
 
 	//Box to mark the area to generate graph in. It should not be rotated, the rotation will be ignored.
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = CPathSettings)
 		class UBoxComponent* VolumeBox;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathSettings)
 		TEnumAsByte<ECollisionChannel>  TraceChannel;
 	
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathSettings)
 		float AgentRadius = 20;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathSettings)
 		float AdditionalTraces = 0;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathSettings)
 		float AgentHeight = 150;
 
 	// How many timer per second do parts of the volume get regenerated based on dynamic obstacles, in seconds
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathSettings)
 		float DynamicObstaclesUpdateRate = 3;
 
 
 	//Size of the smallest voxel size, default: AgentRadius*2
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathGenerationSettings)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathSettings)
 		float VoxelSize = AgentRadius*2;
 
 	// The smaller it is, the faster pathfinding, but smaller values lead to long generation time and higher memory comsumption
 	// Smaller values also limit the size of the volume.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings, meta = (ClampMin = "0", ClampMax = "4", UIMin = "0", UIMax = "4"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathSettings, meta = (ClampMin = "0", ClampMax = "4", UIMin = "0", UIMax = "4"))
 		int OctreeDepth = 2;
 
 	// Drawing depths for debugging, if size of this array is different than OctreeDepth, this will potentially crash
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathSettings)
 		TArray<bool> DepthsToDraw;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathSettings)
 		bool DrawFree = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGenerationSettings)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathSettings)
 		bool DrawOccupied = false;
+
+	// If start or beginning of a path is unreachable, the pathfinding will try to search the WHOLE volume, hence the limit.
+	// Default setting should be more than enough, unless you have a huge labirynth with millions of subtrees.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathSettings)
+		float PathfindingTimeLimit = 0.5f;
 
 	// This is a read only info about generated graph
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = CPathGeneratedInfo)
@@ -133,11 +139,18 @@ public:
 	// Returns the child with this tree id, or his parent at DepthReached in case the child doesnt exist
 	CPathOctree* FindTreeByID(uint32 TreeID, uint32& DepthReached);
 
+	CPathOctree* FindTreeByID(uint32 TreeID);
+
 	// Returns a tree and its TreeID by world location, returns null if location outside of volume. Only for Outer index
 	CPathOctree* FindTreeByWorldLocation(FVector WorldLocation, uint32& TreeID);
 
 	// Returns a leaf and its TreeID by world location, returns null if location outside of volume. 
 	CPathOctree* FindLeafByWorldLocation(FVector WorldLocation, uint32& TreeID, bool MustBeFree = 1);
+
+	// Returns a free leaf and its TreeID by world location, as long as it exists in provided search range and WorldLocation is in this Volume
+	// If SearchRange <= 0, it uses a default dynamic search range
+	// If SearchRange is too large, you might get a free node that is inaccessible from provided WorldLocation
+	CPathOctree* FindClosestFreeLeaf(FVector WorldLocation, uint32& TreeID, float SearchRange = -1);
 
 	// Returns a neighbour of the tree with TreeID in given direction, also returns  TreeID if the neighbour if found
 	CPathOctree* FindNeighbourByID(uint32 TreeID, ENeighbourDirection Direction, uint32& NeighbourID);
@@ -186,7 +199,8 @@ public:
 	// Volume wont start generating as long as this is not 0
 	std::atomic_int PathfindersRunning = 0;
 
-	std::set<AActor*> TrackedDynamicObstacles;
+	
+	std::set<class UCPathDynamicObstacle*> TrackedDynamicObstacles;
 
 	// ----------- Other helper functions ---------------------
 

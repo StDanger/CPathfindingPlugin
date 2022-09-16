@@ -39,6 +39,9 @@ public:
 
 	virtual void Deactivate() override;
 
+	void AddIndexesToUpdate(ACPathVolume* Volume);
+
+	virtual void EndPlay(EEndPlayReason::Type Reason) override;
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
@@ -47,8 +50,7 @@ protected:
 public:	
 
 
-	// Called every frame
-	//virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	
 
 		
 };

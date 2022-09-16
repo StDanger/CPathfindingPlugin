@@ -68,6 +68,9 @@ uint32 FCPathRunnableFindPath::Run()
     while(AsyncActionRef->VolumeRef->GeneratorsRunning.load() > 0 && !AStar->bStop)
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     
+
+   
+
     // Preventing further generation while we search for a path
     bIncreasedPathfRunning = true;
     AsyncActionRef->VolumeRef->PathfindersRunning++;

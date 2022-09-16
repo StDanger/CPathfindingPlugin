@@ -5,6 +5,7 @@
 #include "CPathVolume.h"
 #include "DrawDebugHelpers.h"
 #include <queue>
+#include <deque>
 #include <vector>
 #include <unordered_set>
 #include <memory>
@@ -22,11 +23,16 @@ CPathAStar::~CPathAStar()
 bool CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, FVector End, TArray<CPathAStarNode>& FoundPath)
 {
 	Graph = VolumeRef;
-	TargetLocation = End;
+	
 	uint32 TempID;
+	auto TimeStart = TIMENOW;
+
+	// time limit in miliseconds
+	double TimeLimitMS = Graph->PathfindingTimeLimit * 1000;
 
 	
-	std::priority_queue<CPathAStarNode, std::vector<CPathAStarNode>, std::greater<CPathAStarNode>> Pq;
+	
+	std::priority_queue<CPathAStarNode, std::deque<CPathAStarNode>, std::greater<CPathAStarNode>> Pq;
 
 	// Nodes visited OR added to priority queue
 	std::unordered_set<CPathAStarNode, CPathAStarNode::Hash> VisitedNodes;
@@ -35,13 +41,17 @@ bool CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, FVector End, T
 	std::vector<std::unique_ptr<CPathAStarNode>> ProcessedNodes;
 
 	// Finding start and end node
-	if (!Graph->FindLeafByWorldLocation(Start, TempID))
+	if (!Graph->FindClosestFreeLeaf(Start, TempID))
 		return false;
 	CPathAStarNode StartNode(TempID);
+	StartNode.WorldLocation = Start;
 
-	if(!Graph->FindLeafByWorldLocation(End, TempID))
+	if(!Graph->FindClosestFreeLeaf(End, TempID))
 		return false;
 	CPathAStarNode TargetNode(TempID);
+	TargetLocation = Graph->WorldLocationFromTreeID(TargetNode.TreeID);
+	TargetNode.WorldLocation = TargetLocation;
+
 	CalcFitness(TargetNode);
 	CalcFitness(StartNode);
 		
@@ -83,7 +93,13 @@ bool CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, FVector End, T
 				Pq.push(NewNode);
 			}
 		}
-		
+
+		auto CurrDuration = TIMEDIFF(TimeStart, TIMENOW);
+		if (CurrDuration >= TimeLimitMS)
+		{
+			bStop = true;			
+			UE_LOG(LogTemp, Warning, TEXT("Pathfinding failed - OVERTIME= %lfms   PathLength= %d  NodesVisited= %d   NodesProcessed= %d"), CurrDuration, FoundPath.Num(), VisitedNodes.size(), ProcessedNodes.size());
+		}
 	}
 	
 	int debugCounter = 0;
@@ -96,29 +112,18 @@ bool CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, FVector End, T
 			
 			FoundPath.Add(*FoundPathEnd);
 			FoundPathEnd = FoundPathEnd->PreviousNode;
-		}
-
-
-		/*while (!(TargetNode == StartNode))
-		{
-			debugCounter++;
-			if (debugCounter > 20)
-			{
-				debugCounter = 0;
-			}
-			FoundPath.Add(TargetNode);
-			TargetNode = *VisitedNodes.find(CPathAStarNode(TargetNode.PreviousNodeID));
-		}
-		FoundPath.Add(StartNode);*/
+		}			
 	}
 	
+
 	// Pathfinidng has been interrupted due to premature thread kill, so we dont want to return an incomplete path
 	if (bStop)
 	{
 		FoundPath.Empty();
 		return false;
 	}
-		
+	auto CurrDuration = TIMEDIFF(TimeStart, TIMENOW);
+	UE_LOG(LogTemp, Warning, TEXT("PATHFINDING COMPLETE:  time= %lfms   PathLength= %d  NodesVisited= %d   NodesProcessed= %d"), CurrDuration, FoundPath.Num(), VisitedNodes.size(), ProcessedNodes.size());
 
 	return true;
 }
@@ -151,7 +156,7 @@ void CPathAStar::CalcFitness(CPathAStarNode& Node)
 
 	if (Node.PreviousNode)
 	{
-		Node.DistanceSoFar = Node.PreviousNode->DistanceSoFar + Graph->GetVoxelSizeByDepth(Graph->ExtractDepth(Node.TreeID))/2.f;
+		Node.DistanceSoFar = Node.PreviousNode->DistanceSoFar + Graph->GetVoxelSizeByDepth(Graph->ExtractDepth(Node.TreeID));
 	}
 
 	Node.FitnessResult = EucDistance(Node, TargetLocation) + Node.DistanceSoFar;

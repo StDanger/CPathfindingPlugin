@@ -6,6 +6,9 @@
 #include "DrawDebugHelpers.h"
 #include "Components/BoxComponent.h"
 #include "CPathAStar.h" // this is for debugging only, remove later
+#include <queue>
+#include <deque>
+#include "CPathDynamicObstacle.h"
 #include "GenericPlatform/GenericPlatformAtomics.h"
 
 
@@ -73,6 +76,12 @@ void ACPathVolume::SetDebugPathStart(FVector WorldLocation)
 {
 	DebugPathStart = WorldLocation;
 	HasDebugPathStarted = true;
+
+	uint32 TreeID = 0;
+	if (FindClosestFreeLeaf(WorldLocation, TreeID))
+	{
+		DrawDebugVoxel(TreeID, true, 3);
+	}
 }
 
 void ACPathVolume::SetDebugPathEnd(FVector WorldLocation)
@@ -80,6 +89,13 @@ void ACPathVolume::SetDebugPathEnd(FVector WorldLocation)
 	CPathAStar AStar;
 
 	TArray<CPathAStarNode> Path;
+
+	uint32 TreeID = 0;
+	if (FindClosestFreeLeaf(WorldLocation, TreeID))
+	{
+		DrawDebugVoxel(TreeID, true, 3);
+	}
+
 
 	bool WasFound = AStar.FindPath(this, DebugPathStart, WorldLocation, Path);
 	if (WasFound)
@@ -343,6 +359,10 @@ float ACPathVolume::LocalCoordsInt3ToIndex(FVector V) const
 
 inline float ACPathVolume::GetVoxelSizeByDepth(int Depth) const
 {
+#if WITH_EDITOR
+	checkf(Depth <= OctreeDepth, TEXT("CPATH - Graph Generation:::DEPTH was higher than OctreeDepth"));
+#endif
+
 	return VoxelSize * FMath::Pow(2, OctreeDepth - Depth);
 }
 
@@ -499,6 +519,25 @@ CPathOctree* ACPathVolume::FindTreeByID(uint32 TreeID, uint32& DepthReached)
 	return CurrTree;
 }
 
+CPathOctree* ACPathVolume::FindTreeByID(uint32 TreeID)
+{
+	uint32 Depth = ExtractDepth(TreeID);
+	CPathOctree* CurrTree = &Octrees[ExtractOuterIndex(TreeID)];
+	
+
+	for (uint32 CurrDepth = 1; CurrDepth <= Depth; CurrDepth++)
+	{
+		// Child not found, returning the deepest found parent
+		if (!CurrTree->Children)
+		{
+			break;
+		}
+
+		CurrTree = &CurrTree->Children[ExtractChildIndex(TreeID, CurrDepth)];
+	}
+	return CurrTree;
+}
+
 CPathOctree* ACPathVolume::FindTreeByWorldLocation(FVector WorldLocation, uint32& TreeID)
 {
 	FVector LocalCoords = WorldLocationToLocalCoordsInt3(WorldLocation);
@@ -519,13 +558,14 @@ CPathOctree* ACPathVolume::FindLeafByWorldLocation(FVector WorldLocation, uint32
 
 		if(CurrentTree->Children)
 			FoundLeaf = FindLeafRecursive(RelativeLocation, TreeID, 0, CurrentTree);
-		FoundLeaf = CurrentTree;
+		else
+			FoundLeaf = CurrentTree;
 	}
 
 	// Checking if the found leaf is free, and if not returning its free neighbour
 	if (MustBeFree && FoundLeaf && !FoundLeaf->GetIsFree())
 	{
-		CurrentTree = GetParentTree(TreeID);
+		/*CurrentTree = GetParentTree(TreeID);
 		if (CurrentTree)
 		{
 			for (int i = 0; i < 8; i++)
@@ -535,11 +575,133 @@ CPathOctree* ACPathVolume::FindLeafByWorldLocation(FVector WorldLocation, uint32
 			}
 		}
 
-		if(!FoundLeaf->GetIsFree())
+		if(!FoundLeaf->GetIsFree())*/
 			FoundLeaf = nullptr;
 	}
 
 	return FoundLeaf;
+}
+
+CPathOctree* ACPathVolume::FindClosestFreeLeaf(FVector WorldLocation, uint32& TreeID, float SearchRange)
+{
+	uint32 OriginTreeID = 0xFFFFFFFF;
+	CPathOctree* OriginTree = FindLeafByWorldLocation(WorldLocation, OriginTreeID, false);
+	if(!OriginTree)
+		return nullptr;
+
+	if (OriginTree->GetIsFree())
+	{
+		TreeID = OriginTreeID;
+		return OriginTree;
+	}
+
+	if (SearchRange <= 0)
+	{
+		uint32 Depth = FMath::Max((uint32)1, ExtractDepth(OriginTreeID) - 1);
+		Depth = FMath::Min(Depth, (uint32)OctreeDepth);
+		SearchRange = GetVoxelSizeByDepth(Depth);
+	}
+
+	// Nodes visited OR added to priority queue
+	std::unordered_set<CPathAStarNode, CPathAStarNode::Hash> VisitedNodes;
+	
+
+	std::priority_queue<CPathAStarNode, std::deque<CPathAStarNode>, std::greater<CPathAStarNode>> Pq;
+	std::priority_queue<CPathAStarNode, std::deque<CPathAStarNode>, std::greater<CPathAStarNode>> PqNeighbours;
+
+
+	CPathAStarNode StartNode(OriginTreeID);
+	StartNode.FitnessResult = 0;
+	VisitedNodes.insert(StartNode);
+
+	// Step 1, considering StartNode neighbours only, we dont check range cause neighbours take priority
+	
+	std::vector<uint32> StartNeighbours = FindAllNeighbourLeafs(StartNode.TreeID);
+	for (uint32 NewTreeID : StartNeighbours)
+	{
+
+		CPathAStarNode NewNode(NewTreeID);			
+		NewNode.WorldLocation = WorldLocationFromTreeID(NewNode.TreeID);
+		// Fitness function here is distance from WorldLocation - The voxel extent, cause we want distance to the border of the voxel, not to it's center
+		NewNode.FitnessResult = FVector::Distance(NewNode.WorldLocation, WorldLocation) - GetVoxelSizeByDepth(ExtractDepth(NewNode.TreeID)) / 2.f;
+
+		VisitedNodes.insert(NewNode);
+		PqNeighbours.push(NewNode);			
+	}
+	
+	while (PqNeighbours.size() > 0)
+	{
+		CPathAStarNode CurrentNode = PqNeighbours.top();
+		PqNeighbours.pop();
+		CPathOctree* Tree = FindTreeByID(CurrentNode.TreeID);
+		if (Tree->GetIsFree())
+		{
+			TreeID = CurrentNode.TreeID;
+			return Tree;
+		}
+
+		std::vector<uint32> Neighbours = FindAllNeighbourLeafs(CurrentNode.TreeID);
+		for (uint32 NewTreeID : Neighbours)
+		{
+			CPathAStarNode NewNode(NewTreeID);
+			// We dont want to revisit nodes
+			if (!VisitedNodes.count(NewNode))			
+			{
+				NewNode.WorldLocation = WorldLocationFromTreeID(NewNode.TreeID);
+				// Fitness function here is distance from WorldLocation - The voxel extent, cause we want distance to the border of the voxel, not to it's center
+				NewNode.FitnessResult = FVector::Distance(NewNode.WorldLocation, WorldLocation) - GetVoxelSizeByDepth(ExtractDepth(NewNode.TreeID)) / 2.f;
+
+				// Search range condition
+				if (NewNode.FitnessResult <= SearchRange)
+				{
+					VisitedNodes.insert(NewNode);
+					Pq.push(NewNode);
+				}
+			}
+		}
+	}
+	
+	// If no neighbour was free, we're looking for the closest node in range
+	// We're putting neighbouring nodes as long as they are in SearchRange, until we find one that is free.
+	// Priority queue ensures that we find the closest node to the given WorldLocation.
+	while (Pq.size() > 0)
+	{
+		CPathAStarNode CurrentNode = Pq.top();
+		Pq.pop();
+		CPathOctree* Tree = FindTreeByID(CurrentNode.TreeID);
+		if (Tree->GetIsFree())
+		{
+			TreeID = CurrentNode.TreeID;
+			return Tree;
+		}
+			
+
+		std::vector<uint32> Neighbours = FindAllNeighbourLeafs(CurrentNode.TreeID);
+
+		for (uint32 NewTreeID : Neighbours)
+		{
+			
+			CPathAStarNode NewNode(NewTreeID);
+
+			// We dont want to revisit nodes
+			if (!VisitedNodes.count(NewNode))
+			{
+				
+				NewNode.WorldLocation = WorldLocationFromTreeID(NewNode.TreeID);
+
+				// Fitness function here is distance from WorldLocation - The voxel extent, cause we want distance to the border of the voxel, not to it's center
+				NewNode.FitnessResult = FVector::Distance(NewNode.WorldLocation, WorldLocation) - GetVoxelSizeByDepth(ExtractDepth(NewNode.TreeID))/2.f;
+				
+				// Search range condition
+				if (NewNode.FitnessResult <= SearchRange)
+				{
+					VisitedNodes.insert(NewNode);
+					Pq.push(NewNode);
+				}
+			}
+		}
+	}
+	return nullptr;
 }
 
 CPathOctree* ACPathVolume::FindLeafRecursive(FVector RelativeLocation, uint32& TreeID, uint32 CurrentDepth, CPathOctree* CurrentTree)
@@ -579,6 +741,8 @@ FVector ACPathVolume::GetOuterTreeWorldLocation(uint32 TreeID) const
 	LocalCoords *= GetVoxelSizeByDepth(0);
 	return StartPosition + LocalCoords;
 }
+
+
 
 CPathOctree* ACPathVolume::FindNeighbourByID(uint32 TreeID, ENeighbourDirection Direction, uint32& NeighbourID)
 {
@@ -698,7 +862,6 @@ inline CPathOctree* ACPathVolume::GetParentTree(uint32 TreeId)
 	return nullptr;
 }
 
-
 void ACPathVolume::CleanFinishedGenerators()
 {
 	for (auto Generator = GeneratorThreads.begin(); Generator != GeneratorThreads.end(); Generator++)
@@ -743,11 +906,16 @@ void ACPathVolume::GenerationUpdate()
 		TreesToRegenerate = TreesToRegeneratePreviousUpdate;
 		TreesToRegeneratePreviousUpdate.clear();
 
-		// Addine new indexes
+		// Adding new indexes
 		for (auto Obstacle : TrackedDynamicObstacles)
-		{
-			FCPathAsyncVolumeGenerator::GetIndexesToUpdateFromActor(Obstacle, this);
+		{			
+			if (IsValid(Obstacle))
+			{
+				Obstacle->AddIndexesToUpdate(this);
+			}				
 		}
+
+		// Creating threads
 		if (TreesToRegenerate.size())
 		{
 			// In case there is a lot of trees to update, we split the work into multiple threads to make it faster
