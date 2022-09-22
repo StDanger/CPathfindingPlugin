@@ -23,22 +23,12 @@ class CPATHFINDING_API CPathOctree
 {
 public:
 	CPathOctree();
-
-	//bool IsLeaf = false
-
-	//bool IsFree = false;
-
-	uint32 Data = 0;
-	
-	//for debugging, delete later
-	char VisitCounter = 0;
-
-	//char Depth = 0;
-
-
-	
+		
 
 	CPathOctree* Children = nullptr;
+
+	uint32 Data = 0;
+
 
 
 	inline void SetIsFree(bool IsFree)

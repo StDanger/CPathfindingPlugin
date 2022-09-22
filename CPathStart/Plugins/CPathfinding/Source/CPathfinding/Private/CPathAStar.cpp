@@ -9,6 +9,7 @@
 #include <vector>
 #include <unordered_set>
 #include <memory>
+#include "Algo/Reverse.h"
 
 
 CPathAStar::CPathAStar()
@@ -20,47 +21,43 @@ CPathAStar::~CPathAStar()
 	
 }
 
-bool CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, FVector End, TArray<CPathAStarNode>& FoundPath)
-{
-	Graph = VolumeRef;
-	
+CPathAStarNode* CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, FVector End, uint32 SmoothingPasses, float TimeLimit, TArray<CPathAStarNode>* RawNodes)
+{	
+	Volume = VolumeRef;
+	SearchTimeLimit = TimeLimit;	
 	uint32 TempID;
 	auto TimeStart = TIMENOW;
 
 	// time limit in miliseconds
-	double TimeLimitMS = Graph->PathfindingTimeLimit * 1000;
-
+	double TimeLimitMS = SearchTimeLimit * 1000;	
 	
-	
+	// The A* priority queue
 	std::priority_queue<CPathAStarNode, std::deque<CPathAStarNode>, std::greater<CPathAStarNode>> Pq;
 
 	// Nodes visited OR added to priority queue
 	std::unordered_set<CPathAStarNode, CPathAStarNode::Hash> VisitedNodes;
 
-	// Nodes that went out of priority queue
-	std::vector<std::unique_ptr<CPathAStarNode>> ProcessedNodes;
+	ProcessedNodes.clear();
 
 	// Finding start and end node
-	if (!Graph->FindClosestFreeLeaf(Start, TempID))
-		return false;
+	if (!Volume->FindClosestFreeLeaf(Start, TempID))
+		return nullptr;
 	CPathAStarNode StartNode(TempID);
 	StartNode.WorldLocation = Start;
 
-	if(!Graph->FindClosestFreeLeaf(End, TempID))
-		return false;
-	CPathAStarNode TargetNode(TempID);
-	TargetLocation = Graph->WorldLocationFromTreeID(TargetNode.TreeID);
-	TargetNode.WorldLocation = TargetLocation;
+	if(!Volume->FindClosestFreeLeaf(End, TempID))
+		return nullptr;
 
+	CPathAStarNode TargetNode(TempID);
+	TargetLocation = Volume->WorldLocationFromTreeID(TargetNode.TreeID);
+	TargetNode.WorldLocation = TargetLocation;
 	CalcFitness(TargetNode);
 	CalcFitness(StartNode);
-		
-
 	Pq.push(StartNode);
-	VisitedNodes.insert(StartNode);
-	
+	VisitedNodes.insert(StartNode);	
 	CPathAStarNode* FoundPathEnd = nullptr;
 
+	// A* loop
 	while (Pq.size() > 0 && !bStop)
 	{
 		CPathAStarNode CurrentNode = Pq.top();
@@ -69,13 +66,11 @@ bool CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, FVector End, T
 
 		if (CurrentNode == TargetNode)
 		{
-			FoundPathEnd = ProcessedNodes.back().get();
-			//TargetNode = *VisitedNodes.find(CurrentNode);
+			FoundPathEnd = ProcessedNodes.back().get();			
 			break;
 		}
 		
-		std::vector<uint32> Neighbours = VolumeRef->FindAllNeighbourLeafs(CurrentNode.TreeID);
-
+		std::vector<uint32> Neighbours = VolumeRef->FindFreeNeighbourLeafs(CurrentNode.TreeID);
 		for (uint32 NewTreeID : Neighbours)
 		{
 			if (bStop)
@@ -84,9 +79,8 @@ bool CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, FVector End, T
 			CPathAStarNode NewNode(NewTreeID);
 			if (!VisitedNodes.count(NewNode))
 			{
-				//NewNode.PreviousNodeID = CurrentNode.TreeID;
 				NewNode.PreviousNode = ProcessedNodes.back().get();
-				NewNode.WorldLocation = Graph->WorldLocationFromTreeID(NewNode.TreeID);
+				NewNode.WorldLocation = Volume->WorldLocationFromTreeID(NewNode.TreeID);
 				CalcFitness(NewNode);
 
 				VisitedNodes.insert(NewNode);
@@ -98,51 +92,107 @@ bool CPathAStar::FindPath(ACPathVolume* VolumeRef, FVector Start, FVector End, T
 		if (CurrDuration >= TimeLimitMS)
 		{
 			bStop = true;			
-			UE_LOG(LogTemp, Warning, TEXT("Pathfinding failed - OVERTIME= %lfms   PathLength= %d  NodesVisited= %d   NodesProcessed= %d"), CurrDuration, FoundPath.Num(), VisitedNodes.size(), ProcessedNodes.size());
+			UE_LOG(LogTemp, Warning, TEXT("Pathfinding failed - OVERTIME= %lfms    NodesVisited= %d   NodesProcessed= %d"), CurrDuration, VisitedNodes.size(), ProcessedNodes.size());
 		}
 	}
-	
-	int debugCounter = 0;
-
-
-	if (FoundPathEnd)
-	{
-		while (FoundPathEnd && !bStop)
-		{
-			
-			FoundPath.Add(*FoundPathEnd);
-			FoundPathEnd = FoundPathEnd->PreviousNode;
-		}			
-	}
-	
 
 	// Pathfinidng has been interrupted due to premature thread kill, so we dont want to return an incomplete path
 	if (bStop)
 	{
-		FoundPath.Empty();
-		return false;
+		UE_LOG(LogTemp, Warning, TEXT("PATHFINDING INTERRUPTED!!"));
+		return nullptr;
 	}
-	auto CurrDuration = TIMEDIFF(TimeStart, TIMENOW);
-	UE_LOG(LogTemp, Warning, TEXT("PATHFINDING COMPLETE:  time= %lfms   PathLength= %d  NodesVisited= %d   NodesProcessed= %d"), CurrDuration, FoundPath.Num(), VisitedNodes.size(), ProcessedNodes.size());
 
-	return true;
+	
+	if (FoundPathEnd)
+	{
+		// Adding last node that exactly reflects user's requested location
+		uint32 LastTreeID;
+		if (Volume->FindLeafByWorldLocation(End, LastTreeID, false))
+		{
+			ProcessedNodes.push_back(std::make_unique<CPathAStarNode>(CPathAStarNode(LastTreeID)));
+			ProcessedNodes.back()->WorldLocation = End;
+			ProcessedNodes.back()->PreviousNode = FoundPathEnd;
+			FoundPathEnd = ProcessedNodes.back().get();
+		}
+		
+		// For debugging
+		if (RawNodes)
+		{
+			auto CurrNode = FoundPathEnd;
+			while (CurrNode)
+			{
+				RawNodes->Add(*CurrNode);
+				CurrNode = CurrNode->PreviousNode;
+			}			
+		}
+
+		// Post processing to remove unnecessary nodes
+		for (uint32 i = 0; i < SmoothingPasses; i++)
+		{
+			SmoothenPath(FoundPathEnd);
+		}			
+	}
+	
+	auto CurrDuration = TIMEDIFF(TimeStart, TIMENOW);
+	UE_LOG(LogTemp, Warning, TEXT("PATHFINDING COMPLETE:  time= %lfms    NodesVisited= %d   NodesProcessed= %d"), CurrDuration, VisitedNodes.size(), ProcessedNodes.size());
+
+	return FoundPathEnd;
 }
 
-void CPathAStar::DrawPath(const TArray<CPathAStarNode>& Path) const
+void CPathAStar::DrawPath(const TArray<FCPathNode>& Path) const
 {
+	float Duration = 10;
 	for (int i = 0; i < Path.Num()-1; i++)
 	{
-		DrawDebugLine(Graph->GetWorld(), Graph->WorldLocationFromTreeID(Path[i].TreeID), Graph->WorldLocationFromTreeID(Path[i + 1].TreeID), FColor::Magenta, false, 0.5f, 3, 1.5);
+		DrawDebugLine(Volume->GetWorld(), Path[i].WorldLocation, Path[i + 1].WorldLocation, FColor::Magenta, false, Duration, 3, 1.5);
+		DrawDebugPoint(Volume->GetWorld(), Path[i].WorldLocation, 60, FColor::Cyan, false, Duration);
 	}
 }
 
-void CPathAStar::TransformToUserPath(ACPathVolume* VolumeRef, TArray<CPathAStarNode>& AStarPath, TArray<FCPathNode>& UserPath)
+void CPathAStar::TransformToUserPath(CPathAStarNode* PathEnd, TArray<FCPathNode>& UserPath, bool bReverse)
 {
-	UserPath.Reserve(AStarPath.Num());
-	for (int i = AStarPath.Num() - 1; i >= 0; i--)
-	{
-		UserPath.Add(FCPathNode(AStarPath[i].WorldLocation));
+	float Tolerance = FMath::Cos(FMath::DegreesToRadians(LineAngleToleranceDegrees));
+	if (!PathEnd)
+		return;
+		
+	CPathAStarNode* CurrNode = PathEnd;
+	
+	// Initializing variables for loop
+	FVector Normal = CurrNode->WorldLocation - CurrNode->PreviousNode->WorldLocation;
+	Normal.Normalize();
+	UserPath.Add(FCPathNode(CurrNode->WorldLocation));
+
+	while (CurrNode->PreviousNode && CurrNode->PreviousNode->PreviousNode)
+	{		
+		FVector NextNormal = CurrNode->PreviousNode->WorldLocation - CurrNode->PreviousNode->PreviousNode->WorldLocation;
+		NextNormal.Normalize();
+		
+		
+		if (FVector::DotProduct(Normal, NextNormal) >= Tolerance)
+		{
+			CurrNode->PreviousNode = CurrNode->PreviousNode->PreviousNode;
+			Normal = CurrNode->WorldLocation - CurrNode->PreviousNode->WorldLocation;
+			Normal.Normalize();
+		}
+		else
+		{					
+			UserPath.Add(FCPathNode(CurrNode->PreviousNode->WorldLocation));
+			UserPath.Last().Normal = Normal;
+					
+			CurrNode = CurrNode->PreviousNode;
+			Normal = NextNormal;
+		}
 	}
+	if (CurrNode->PreviousNode)
+	{
+		UserPath.Add(FCPathNode(CurrNode->PreviousNode->WorldLocation));
+		UserPath.Last().Normal = Normal;					
+	}
+	if (bReverse)
+		Algo::Reverse(UserPath);
+
+	
 }
 
 float CPathAStar::EucDistance(CPathAStarNode& Node, FVector Target) const
@@ -151,14 +201,34 @@ float CPathAStar::EucDistance(CPathAStarNode& Node, FVector Target) const
 }
 
 void CPathAStar::CalcFitness(CPathAStarNode& Node)
-{
-	
-
+{	
 	if (Node.PreviousNode)
-	{
-		Node.DistanceSoFar = Node.PreviousNode->DistanceSoFar + Graph->GetVoxelSizeByDepth(Graph->ExtractDepth(Node.TreeID));
+	{		
+		Node.DistanceSoFar = Node.PreviousNode->DistanceSoFar + EucDistance(*Node.PreviousNode, Node.WorldLocation);
 	}
+	Node.FitnessResult = Node.DistanceSoFar + 3.5f*EucDistance(Node, TargetLocation);
+}
 
-	Node.FitnessResult = EucDistance(Node, TargetLocation) + Node.DistanceSoFar;
+inline bool CPathAStar::CanSkip(FVector Start, FVector End)
+{
+	FHitResult HitResult;
+	Volume->GetWorld()->SweepSingleByChannel(HitResult, Start, End, FQuat(FRotator(0, 0, 0)), Volume->TraceChannel, Volume->TraceShapesByDepth.back().back());
 
+	return !HitResult.bBlockingHit;
+}
+
+void CPathAStar::SmoothenPath(CPathAStarNode* PathEnd)
+{
+	if (!PathEnd)
+		return;
+	CPathAStarNode* CurrNode = PathEnd;
+	while (CurrNode->PreviousNode && CurrNode->PreviousNode->PreviousNode && !bStop)
+	{
+		if (CanSkip(CurrNode->WorldLocation, CurrNode->PreviousNode->PreviousNode->WorldLocation))
+		{
+			CurrNode->PreviousNode = CurrNode->PreviousNode->PreviousNode;
+		}
+		
+		CurrNode = CurrNode->PreviousNode;
+	}
 }

@@ -124,7 +124,16 @@ bool FCPathAsyncVolumeGenerator::RefreshTreeRec(CPathOctree* OctreeRef, uint32 D
 {
 
 	FCollisionShape TraceBox = FCollisionShape::MakeBox(FVector(VolumeRef->GetVoxelSizeByDepth(Depth) / 2.f));
-	bool IsFree = !VolumeRef->GetWorld()->OverlapAnyTestByChannel(TreeLocation, FQuat(FRotator(0)), VolumeRef->TraceChannel, VolumeRef->TraceBoxByDepth[Depth]);
+	bool IsFree = true;
+	for (auto Shape : VolumeRef->TraceShapesByDepth[Depth])
+	{		
+		if (VolumeRef->GetWorld()->OverlapAnyTestByChannel(TreeLocation, FQuat(FRotator(0)), VolumeRef->TraceChannel, Shape))
+		{
+			IsFree = false;
+			break;
+		}	
+	}
+	
 	OctreeRef->SetIsFree(IsFree);
 
 	VolumeRef->VoxelCountAtDepth[Depth]++;

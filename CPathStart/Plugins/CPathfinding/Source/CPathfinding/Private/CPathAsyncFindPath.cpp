@@ -5,13 +5,15 @@
 #include "CPathVolume.h"
 #include <thread>
 
-UCPathAsyncFindPath* UCPathAsyncFindPath::FindPathAsync(ACPathVolume* Volume, FVector StartLocation, FVector EndLocation)
+UCPathAsyncFindPath* UCPathAsyncFindPath::FindPathAsync(ACPathVolume* Volume, FVector StartLocation, FVector EndLocation, int SmoothingPasses, float TimeLimit)
 {
     UCPathAsyncFindPath* Instance = NewObject<UCPathAsyncFindPath>();
     Instance->VolumeRef = Volume;
     Instance->RunnableFindPath = new FCPathRunnableFindPath(Instance);
     Instance->PathStart = StartLocation;
     Instance->PathEnd = EndLocation;
+    Instance->Smoothing = SmoothingPasses;
+    Instance->SearchTimeLimit = TimeLimit;
     
     return Instance;
 }
@@ -45,6 +47,7 @@ void UCPathAsyncFindPath::BeginDestroy()
         CurrentThread->WaitForCompletion();
         CurrentThread->Kill();
     }
+
        
     delete RunnableFindPath;
 }
@@ -75,13 +78,14 @@ uint32 FCPathRunnableFindPath::Run()
     bIncreasedPathfRunning = true;
     AsyncActionRef->VolumeRef->PathfindersRunning++;
 
-    TArray<CPathAStarNode> TempArray;
-    auto FoundPath = AStar->FindPath(AsyncActionRef->VolumeRef, AsyncActionRef->PathStart, AsyncActionRef->PathEnd, TempArray);
+    
+    auto FoundPath = AStar->FindPath(AsyncActionRef->VolumeRef, AsyncActionRef->PathStart, AsyncActionRef->PathEnd, AsyncActionRef->Smoothing, AsyncActionRef->SearchTimeLimit);
+    
 
     if (FoundPath)
     {
         //AStar->DrawPath(FoundPath);
-        AStar->TransformToUserPath(AsyncActionRef->VolumeRef, TempArray, AsyncActionRef->UserPath);
+        AStar->TransformToUserPath(FoundPath, AsyncActionRef->UserPath);
         AsyncActionRef->Success.Broadcast(AsyncActionRef->UserPath, true);
     }
     else
@@ -104,11 +108,13 @@ void FCPathRunnableFindPath::Stop()
     bIncreasedPathfRunning = false;
 
     delete AStar;
+    AStar = nullptr;
     UE_LOG(LogTemp, Warning, TEXT("pathfinder stopped"));
 }
 
 void FCPathRunnableFindPath::Exit()
 {
     delete AStar;
+    AStar = nullptr;
     UE_LOG(LogTemp, Warning, TEXT("pathfinder exit"));
 }

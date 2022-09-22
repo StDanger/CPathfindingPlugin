@@ -31,16 +31,25 @@ public:
 		FResponseDelegate Failure;
 
 	
-
+	// On success, returns a path from Start to End location. Both start and end must be inside the given Volume.
+	// If start or end is unreachable (or time limit was exceeded) returns nothing.
+	// SmoothingPasses - During a smoothing pass, every other node is potentially removed, as long as there is an empty space to the next one.
+	// With SmoothingPasses=0, the path will be very jagged since the graph is Discrete.
+	// With SmoothingPasses > 2 there is a potential loss of data, especially if a custom Cost function is used.
 	UFUNCTION(BlueprintCallable, Category=CPath, meta = (BlueprintInternalUseOnly = "true"))
-		static UCPathAsyncFindPath* FindPathAsync(class ACPathVolume* Volume, FVector StartLocation, FVector EndLocation);
+		static UCPathAsyncFindPath* FindPathAsync(class ACPathVolume* Volume, FVector StartLocation, FVector EndLocation, int SmoothingPasses=2, float TimeLimit=0.2f);
 
 	virtual void Activate() override;
 	virtual void BeginDestroy() override;
 	class ACPathVolume* VolumeRef;
 
 	FVector PathStart, PathEnd;
+	uint32 Smoothing;
+	float SearchTimeLimit;
+
+
 	TArray<FCPathNode> UserPath;
+	TArray<CPathAStarNode> RawPathNodes;
 
 private:
 

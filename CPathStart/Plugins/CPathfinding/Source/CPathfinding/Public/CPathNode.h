@@ -9,6 +9,7 @@
  * 
  */
 
+// Internal class used while generating path
 class CPathAStarNode
 {
 public:
@@ -26,7 +27,7 @@ public:
 	float FitnessResult = 9999999999.f;
 	float DistanceSoFar = 0;
 
-	// This is valid ONLY during A*, probably a temporary solution
+	// This is NOT always valid. 
 	CPathAStarNode* PreviousNode = nullptr;
 
 	FVector WorldLocation;
@@ -58,6 +59,7 @@ public:
 	~CPathAStarNode();
 };
 
+
 USTRUCT(BlueprintType) 
 struct FCPathNode
 {
@@ -72,6 +74,10 @@ struct FCPathNode
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
         FVector WorldLocation;
+
+	// Normalized vector pointing to next node. ZeroVector on last node.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+		FVector Normal = FVector(0, 0, 0);
 
 
 };

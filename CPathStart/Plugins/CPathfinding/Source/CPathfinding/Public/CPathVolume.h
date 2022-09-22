@@ -11,16 +11,23 @@
 #include <atomic>
 #include <set>
 #include <list>
+#include "PhysicsInterfaceTypesCore.h"
 #include "CPathOctree.h"
 #include "CPathAsyncVolumeGeneration.h"
 #include "CPathVolume.generated.h"
 
+// TreeID settings
+// If you change these, you will also need to change some masks in functions like ReplaceDepth, ExtractDepth, etc
+#define DEPTH_0_BITS 21
+#define DEPTH_0_LIMIT (uint32)1<<DEPTH_0_BITS
+#define DEPTH_0_MASK 0x001FFFFF
+#define DEPTH_MASK 0x00600000
+#define MAX_DEPTH 3
 
-// This limit can be up to 2^16
-#define DEPTH_0_LIMIT (uint32)1<<16 
-
+// Time measurement macros
 #define TIMENOW std::chrono::steady_clock::now()
-#define TIMEDIFF(BEGIN, END) ((double)std::chrono::duration_cast<std::chrono::nanoseconds>(END - BEGIN).count())/1000000.0
+// this is in ms
+#define TIMEDIFF(BEGIN, END) ((double)std::chrono::duration_cast<std::chrono::nanoseconds>(END - BEGIN).count())/1000000.0 
 
 
 UCLASS()
@@ -49,25 +56,28 @@ public:
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathSettings)
 		float AgentRadius = 20;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathSettings)
-		float AdditionalTraces = 0;
-
+		
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathSettings)
-		float AgentHeight = 150;
+		float AgentHalfHeight = 75;
+
+	// Spports Capsule, sphere and box.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathSettings)
+		TEnumAsByte<EAgentShape> AgentShape = EAgentShape::Capsule;
 
 	// How many timer per second do parts of the volume get regenerated based on dynamic obstacles, in seconds
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathSettings)
 		float DynamicObstaclesUpdateRate = 3;
 
 
-	//Size of the smallest voxel size, default: AgentRadius*2
+	// Size of the smallest voxel size, default: AgentRadius*2
+	// If you have a lot of tight spaces and want precise pathfinding, set this lower than your lowest Agent dimension.
+	// This obviously comes with increased memory cost and speed.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = CPathSettings)
 		float VoxelSize = AgentRadius*2;
 
 	// The smaller it is, the faster pathfinding, but smaller values lead to long generation time and higher memory comsumption
 	// Smaller values also limit the size of the volume.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathSettings, meta = (ClampMin = "0", ClampMax = "4", UIMin = "0", UIMax = "4"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathSettings, meta = (ClampMin = "0", ClampMax = "3", UIMin = "0", UIMax = "3"))
 		int OctreeDepth = 2;
 
 	// Drawing depths for debugging, if size of this array is different than OctreeDepth, this will potentially crash
@@ -99,9 +109,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = CPathDebug)
 		void SetDebugPathEnd(FVector WorldLocation);
 
+	// Draws the octree structure around WorldLocation, up tp VoxelLlimit
+	UFUNCTION(BlueprintCallable, Category = CPathDebug)
+		void DrawAroundLocation(FVector WorldLocation, int VoxelLimit, float Duration);
 
+	// Shape to use when generating graph/paths. If left empty, uses voxels for every trace. 
+	//UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CPathGeneratedInfo)
+		//FCollisionShape TraceShape = FCollisionShape::MakeBox(FVector(GetVoxelSizeByDepth(OctreeDepth) / 2.f));
 
-	
+		// Shapes to use when checking if voxel is free or not
+	std::vector<std::vector<FCollisionShape>> TraceShapesByDepth;
+
 protected:
 	
 	virtual void BeginPlay() override;
@@ -130,8 +148,7 @@ protected:
 	// Left returns right, up returns down, Front returns behind, etc
 	static const int8 LookupTable_OppositeSide[6];
 
-	// This is to avoid initializing a new box every subtree generation
-	TArray<FCollisionShape> TraceBoxByDepth;
+
 	
 public:
 	//----------- TreeID ------------------------------------------------------------------------
@@ -139,13 +156,13 @@ public:
 	// Returns the child with this tree id, or his parent at DepthReached in case the child doesnt exist
 	CPathOctree* FindTreeByID(uint32 TreeID, uint32& DepthReached);
 
-	CPathOctree* FindTreeByID(uint32 TreeID);
+	inline CPathOctree* FindTreeByID(uint32 TreeID);
 
 	// Returns a tree and its TreeID by world location, returns null if location outside of volume. Only for Outer index
 	CPathOctree* FindTreeByWorldLocation(FVector WorldLocation, uint32& TreeID);
 
 	// Returns a leaf and its TreeID by world location, returns null if location outside of volume. 
-	CPathOctree* FindLeafByWorldLocation(FVector WorldLocation, uint32& TreeID, bool MustBeFree = 1);
+	inline CPathOctree* FindLeafByWorldLocation(FVector WorldLocation, uint32& TreeID, bool MustBeFree = 1);
 
 	// Returns a free leaf and its TreeID by world location, as long as it exists in provided search range and WorldLocation is in this Volume
 	// If SearchRange <= 0, it uses a default dynamic search range
@@ -156,7 +173,7 @@ public:
 	CPathOctree* FindNeighbourByID(uint32 TreeID, ENeighbourDirection Direction, uint32& NeighbourID);
 
 	// Returns a list of free adjecent leafs as TreeIDs
-	std::vector<uint32> FindAllNeighbourLeafs(uint32 TreeID);
+	std::vector<uint32> FindFreeNeighbourLeafs(uint32 TreeID);
 
 	// Returns a parent of tree with given TreeID or null if TreeID has depth of 0
 	inline CPathOctree* GetParentTree(uint32 TreeId);
@@ -206,9 +223,10 @@ public:
 
 	inline float GetVoxelSizeByDepth(int Depth) const;
 
-	// Draws the tree, this takes all the drawing options into condition. If Duraiton is left 0, it never disappears. 
-	//  If Color = green, free trees are green and occupied are red.
-	void DrawDebugVoxel(uint32 TreeID, bool DrawIfNotLeaf = true, float Duration = 0, FColor Color = FColor::Green);
+	// Draws the voxel, this takes all the drawing options into condition. If Duraiton is below 0, it never disappears. 
+	// If Color = green, free trees are green and occupied are red.
+	// Returns true if drawn, false otherwise
+	bool DrawDebugVoxel(uint32 TreeID, bool DrawIfNotLeaf = true, float Duration = 0, FColor Color = FColor::Green);
 
 private:
 
