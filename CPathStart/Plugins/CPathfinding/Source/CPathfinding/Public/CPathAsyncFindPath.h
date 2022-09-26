@@ -56,8 +56,7 @@ private:
 	
 	class FCPathRunnableFindPath* RunnableFindPath = nullptr;
 	FRunnableThread* CurrentThread = nullptr;
-	TQueue<bool> ThreadData;
-
+	
 };
 
 class FCPathRunnableFindPath : public FRunnable

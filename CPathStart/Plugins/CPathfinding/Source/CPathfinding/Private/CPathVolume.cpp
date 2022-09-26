@@ -11,6 +11,7 @@
 #include <list>
 #include <unordered_set>
 #include "CPathDynamicObstacle.h"
+#include "TimerManager.h"
 #include "GenericPlatform/GenericPlatformAtomics.h"
 
 

@@ -3,6 +3,7 @@
 
 #include "CPathAsyncVolumeGeneration.h"
 #include "CPathVolume.h"
+#include "Engine/World.h"
 #include <thread>
 
 FCPathAsyncVolumeGenerator::FCPathAsyncVolumeGenerator(ACPathVolume* Volume, uint32 StartIndex, uint32 EndIndex, bool Obstacles)

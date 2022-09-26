@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <memory>
 #include "Algo/Reverse.h"
+#include "Engine/World.h"
 
 
 CPathAStar::CPathAStar()

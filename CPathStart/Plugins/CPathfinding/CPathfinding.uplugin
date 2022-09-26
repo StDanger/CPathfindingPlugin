@@ -3,22 +3,25 @@
 	"Version": 1,
 	"VersionName": "1.0",
 	"FriendlyName": "CPathfinding",
-	"Description": "Customizable Pathfinding is a highly customizable pathfinding plugin for any type of game",
-	"Category": "Other",
-	"CreatedBy": "NonStatic",
+	"Description": "Customizable Pathfinding is a highly customizable pathfinder, suitable for flying objects across large spaces",
+	"Category": "AI",
+	"CreatedBy": "Dominik Trautman",
 	"CreatedByURL": "",
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
 	"CanContainContent": true,
-	"IsBetaVersion": true,
-	"IsExperimentalVersion": false,
 	"Installed": false,
 	"Modules": [
 		{
 			"Name": "CPathfinding",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [],
+			"WhitelistPlatforms": [
+				"Win64",
+				"Win32"
+			]
 		}
 	]
 }
